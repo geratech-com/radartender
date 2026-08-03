@@ -787,6 +787,14 @@ st.sidebar.info(
     "Database diperbarui secara otomatis setiap hari via **GitHub Actions**.\n\n"
     "Gunakan filter di halaman utama untuk menganalisis proyek."
 )
+
+# ⚠️ DISCLAIMER KHUSUS SOBAT
+st.sidebar.warning(
+    "⚠️ **Disclaimer:**\n\n"
+    "Halo Sobat! Data yang tersaji di platform ini merupakan hasil penarikan (*scraping*) otomatis dari situs resmi SPSE/LPSE. "
+    "Mohon untuk tetap melakukan konfirmasi dan verifikasi ulang secara langsung pada portal resmi LPSE terkait ya, Sobat! 🙏"
+)
+
 st.sidebar.markdown("---")
 
 # ==============================================================================
