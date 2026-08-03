@@ -7,7 +7,7 @@ echo ===================================================
 echo.
 python robot.py
 echo.
-"C:\Program Files\Git\cmd\git.exe" add Hasil_Penarikan_LPSE_Nasional.xlsx
+"C:\Program Files\Git\cmd\git.exe" add .
 "C:\Program Files\Git\cmd\git.exe" commit -m "Update Penuh 104 LPSE: %date%"
 "C:\Program Files\Git\cmd\git.exe" push origin main
 echo.
