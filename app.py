@@ -296,7 +296,6 @@ def clean_df_master(df):
     df = df.copy()
     df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
 
-    # KUNCI 100% DI SINI
     return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
@@ -356,9 +355,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     pemenang = "Belum Ditetapkan"
     nilai_kontrak = 0.0
     tgl_pembuatan = "-"
-    
-    # PERHATIAN: Skrip ini DILARANG KERAS mengekstrak/menimpa label "Jenis Pengadaan" 
-    # agar tidak merusak filter mutlak 3 kategori dari langkah sebelumnya.
 
     js_pengumuman_extractor = """
     () => {
@@ -486,6 +482,8 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
+    all_scraped_data = []
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -591,7 +589,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                             clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
                             tahapan_clean = normalize_tahapan(tahapan_raw)
 
-                            # PENGUNCIAN 3 KATEGORI MUTLAK DARI JSON KATEGORI LABEL
                             cat_lower = str(cat_label).lower()
                             jenis_matched = None
                             
@@ -602,7 +599,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                             elif "konsultansi" in cat_lower and "konstruksi" in cat_lower and "non" not in cat_lower:
                                 jenis_matched = "Jasa Konsultansi Badan Usaha Konstruksi"
 
-                            # Jika bukan 3 kategori di atas, ABAIKAN dan tendang langsung
                             if not jenis_matched:
                                 continue
 
@@ -622,7 +618,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                     "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
                                     "HPS": float(hps_val), "Metode": "Seleksi / Tender",
                                     "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                    "Jenis Pengadaan": jenis_matched, # TELAH DIKUNCI MATI
+                                    "Jenis Pengadaan": jenis_matched,
                                     "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
                                     "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
                                     "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -637,12 +633,10 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    # fetch_detail_paket TIDAK AKAN menyentuh 'Jenis Pengadaan' lagi!
                     (exact_hps, pemenang, nilai_kontrak_detail, tgl_pembuatan) = fetch_detail_paket(
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    # FILTER FINAL BERLAPIS
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -657,9 +651,14 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 if valid_candidates:
                     df_lpse = pd.DataFrame(valid_candidates, columns=KOLOM_TARGET)
                     save_and_update_excel(df_lpse, FILE_EXCEL_OUTPUT)
+                    all_scraped_data.extend(valid_candidates)
                     log_container.success(f"🎉 [{lpse_nama}] Sukses Menemukan {len(valid_candidates)} Paket Valid 3 Kategori!")
 
         browser.close()
+
+    if all_scraped_data:
+        df_all = pd.DataFrame(all_scraped_data, columns=KOLOM_TARGET)
+        save_and_update_excel(df_all, FILE_EXCEL_OUTPUT)
 
     if not os.path.exists(FILE_EXCEL_OUTPUT):
         df_empty = pd.DataFrame(columns=KOLOM_TARGET)
