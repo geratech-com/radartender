@@ -307,7 +307,7 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    FILTRASI MUTLAK TANPA TEBAK JUDUL:
+    FILTRASI MUTLAK MURNI KOLOM 'JENIS PENGADAAN':
     HANYA menyisakan baris yang nilai 'Jenis Pengadaan'-nya SAMA PERSIS dengan ALL_3_CATEGORIES.
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
@@ -378,28 +378,28 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     tgl_pembuatan = "-"
     exact_jenis_pengadaan = ""
 
-    # EXTRACTOR UTAMA: BACA LANGSUNG SEL ISI KEDUA (children[1]) PADA HALAMAN SPSE
+    # EXTRACTOR PELURU PERAK: MENGAMBIL SEL PERSIS DI SEBELAHNYA (nextElementSibling)
     js_pengumuman_extractor = """
     () => {
         let hps = "";
         let tgl = "-";
         let jenis = "";
         
-        let trs = document.querySelectorAll('table tr');
-        for (let tr of trs) {
-            if (tr.children.length >= 2) {
-                let label = tr.children[0].innerText.toLowerCase().trim();
-                let val = tr.children[1].innerText.trim();
-                
-                if (label.includes('jenis pengadaan')) {
-                    jenis = val;
-                }
-                if (label.includes('tanggal pembuatan')) {
-                    tgl = val;
-                }
-                if (label.includes('hps paket') || label.includes('nilai hps')) {
-                    hps = val;
-                }
+        let els = document.querySelectorAll('th, td');
+        for (let el of els) {
+            let txt = el.innerText.toLowerCase().trim();
+            
+            if (txt === 'jenis pengadaan' || txt.includes('jenis pengadaan')) {
+                let next = el.nextElementSibling;
+                if (next && next.innerText) jenis = next.innerText.trim();
+            }
+            if (txt === 'tanggal pembuatan' || txt.includes('tanggal pembuatan')) {
+                let next = el.nextElementSibling;
+                if (next && next.innerText) tgl = next.innerText.trim();
+            }
+            if (txt.includes('hps paket') || txt.includes('nilai hps')) {
+                let next = el.nextElementSibling;
+                if (next && next.innerText) hps = next.innerText.trim();
             }
         }
         return {tgl: tgl, hps: hps, jenis: jenis};
@@ -464,7 +464,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
 
-            # Teks Jenis Pengadaan Asli dari Layar SPSE
+            # Teks Jenis Pengadaan Asli dari Halaman SPSE
             if res_pengumuman.get('jenis'):
                 exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
 
@@ -693,7 +693,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    # Jika halaman SPSE mengembalikan nilai resmi Jenis Pengadaan, timpa variabel
                     if exact_jenis_pengadaan:
                         cand["Jenis Pengadaan"] = exact_jenis_pengadaan
 
