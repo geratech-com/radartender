@@ -199,6 +199,7 @@ DAFTAR_LPSE = [
     {"nama": "Kota Jayapura", "url": "https://spse.inaproc.id/jayapura/lelang"},
 ]
 
+# KATEGORI RESMI YANG BOLEH LOLOS (MUTLAK)
 ALL_3_CATEGORIES = [
     "Jasa Konsultansi Badan Usaha Konstruksi",
     "Jasa Konsultansi Badan Usaha Non Konstruksi",
@@ -306,73 +307,19 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    Pembersih Master Data Excel:
-    Mengkoreksi data lama di Excel yang terlabeli 'Jasa Konsultansi'
-    padahal judulnya murni proyek fisik kontraktor.
+    FILTRASI MUTLAK:
+    Hanya meloloskan data yang nilai kolom 'Jenis Pengadaan'-nya 
+    SAMA PERSIS dengan salah satu isi ALL_3_CATEGORIES.
     """
-    if df.empty or "Nama Paket" not in df.columns or "Jenis Pengadaan" not in df.columns:
+    if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
+    df = df.copy()
     df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
-    df["Nama Paket"] = df["Nama Paket"].astype(str).str.strip()
 
-    # Filter 1: Harus masuk 3 Kategori Sah
+    # KUNCI MUTLAK: Buang semua yang jenis pengadaannya bukan 3 Kategori Sah
     df = df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)]
-
-    consultancy_keywords = [
-        "konsultansi", "konsultan", "supervisi", "pengawasan", "perencanaan",
-        "perancangan", "manajemen", "ded", "studi", "kajian", "masterplan",
-        "survey", "investigasi", "amdal", "ukl", "upl", "fs", "feasibility",
-        "pendampingan", "penyusunan", "evaluasi", "sistem", "software", "aplikasi",
-        "naskah akademis", "audit"
-    ]
-    
-    physical_starts = [
-        "pekerjaan konstruksi", "pengadaan konstruksi", "pembangunan",
-        "pelaksanaan konstruksi", "pelaksanaan", "renovasi", "rehabilitasi",
-        "pemeliharaan", "penataan", "pengerukan", "pemasangan", "pengerjaan"
-    ]
-
-    def is_really_valid(row):
-        jenis = str(row.get("Jenis Pengadaan", "")).strip()
-        nama = str(row.get("Nama Paket", "")).lower().strip()
-
-        # Terintegrasi -> SELALU LOLOS
-        if jenis == "Pekerjaan Konstruksi Terintegrasi" or "terintegrasi" in nama:
-            return True
-
-        # Konsultansi -> jika judul fisik tanpa kata kunci konsultansi -> BUANG
-        starts_physical = any(nama.startswith(ps) or f" {ps} " in f" {nama} " for ps in physical_starts)
-        has_consultancy_word = any(ck in nama for ck in consultancy_keywords)
-
-        if starts_physical and not has_consultancy_word:
-            return False
-
-        return True
-
-    mask = df.apply(is_really_valid, axis=1)
-    return df[mask].reset_index(drop=True)
-
-def identify_jenis_pengadaan_flexible(row_text):
-    text = str(row_text).lower()
-    if "perorangan" in text: return None
-    
-    is_konsul_kw = any(kw in text for kw in [
-        "konsultansi", "konsultan", "supervisi", "pengawasan",
-        "manajemen konstruksi", "perencanaan", "perancangan",
-        "studi kelayakan", "ded", "kajian", "masterplan"
-    ])
-
-    if "terintegrasi" in text:
-        return "Pekerjaan Konstruksi Terintegrasi"
-    
-    if ("non konstruksi" in text or "non-konstruksi" in text) and is_konsul_kw:
-        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-
-    if is_konsul_kw and "non" not in text:
-        return "Jasa Konsultansi Badan Usaha Konstruksi"
-
-    return None
+    return df.reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
     t_clean = re.sub(r"<[^>]+>", " ", str(tahapan_raw)).strip()
@@ -426,14 +373,14 @@ def standardize_lpse_link(raw_url, kode_lpse_default="pu"):
     return f"https://spse.inaproc.id/{instansi}/evaluasi/{kode_id}/pemenangberkontrak"
 
 
-ddef fetch_detail_paket(context, base_domain, kode_id, base_referer):
+def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     exact_hps = 0.0
     pemenang = "Belum Ditetapkan"
     nilai_kontrak = 0.0
     tgl_pembuatan = "-"
     exact_jenis_pengadaan = ""
 
-    # JS EXTRACTOR PRESISI: Menyapu baris tabel <tr> untuk Jenis Pengadaan, HPS, dan Tgl Pembuatan
+    # MENYEDOT TEKS DARI TABEL "JENIS PENGADAAN" PADA WEB SPSE (BLOK MERAH)
     js_pengumuman_extractor = """
     () => {
         let hps = "";
@@ -444,17 +391,15 @@ ddef fetch_detail_paket(context, base_domain, kode_id, base_referer):
         for (let tr of trs) {
             let txt = tr.innerText.toLowerCase();
             
-            // 1. Tarik Jenis Pengadaan (Sesuai yang di-blok di screenshot)
+            // SEDOT ISI KOLOM 'JENIS PENGADAAN' PERSIS SESUAI LAYAR
             if (txt.includes('jenis pengadaan')) {
                 let td = tr.querySelector('td');
                 if (td) jenis = td.innerText.trim();
             }
-            // 2. Tarik Tanggal Pembuatan
             if (txt.includes('tanggal pembuatan')) {
                 let td = tr.querySelector('td');
                 if (td) tgl = td.innerText.trim();
             }
-            // 3. Tarik Nilai HPS
             if (txt.includes('hps paket') || txt.includes('nilai hps')) {
                 let td = tr.querySelector('td');
                 if (td) hps = td.innerText.trim();
@@ -514,17 +459,15 @@ ddef fetch_detail_paket(context, base_domain, kode_id, base_referer):
             dp.goto(url_p, referer=base_referer, wait_until="domcontentloaded", timeout=20000)
             res_pengumuman = dp.evaluate(js_pengumuman_extractor)
             
-            # Ekstrak Tgl Pembuatan
             if res_pengumuman.get('tgl') and res_pengumuman['tgl'] != "-":
                 m = re.search(r"([\d]{1,2}\s+[A-Za-z]+\s+[\d]{4})", res_pengumuman['tgl'])
                 if m: tgl_pembuatan = m.group(1).strip()
                 
-            # Ekstrak HPS Exact
             if res_pengumuman.get('hps'):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
 
-            # Ekstrak Jenis Pengadaan Tepat Dari Blok Halaman
+            # Teks Jenis Pengadaan Resmi dari Web SPSE
             if res_pengumuman.get('jenis'):
                 exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
 
@@ -580,7 +523,7 @@ def save_and_update_excel(df_new, file_output):
         except Exception: df_final = df_new
     else: df_final = df_new
 
-    # Filter akhir
+    # Filter mutlak sebelum simpan
     df_final = clean_df_master(df_final)
 
     with pd.ExcelWriter(file_output, engine="openpyxl") as writer:
@@ -665,7 +608,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     } catch(e) { break; }
                     start += length;
                     pagesFetched++;
-                    const jedaAcak = Math.floor(Math.random() * (3500 - 1500 + 1)) + 1500;
+                    const jedaAcak = Math.floor(Math.random() * (2000 - 1000 + 1)) + 1000;
                     await new Promise(r => setTimeout(r, jedaAcak));
                 }
             }
@@ -736,7 +679,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                     "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 }
 
-            # TAHAP 2: PENGAYAAN DETAIL & VALIDASI MUTLAK KOLOM 'JENIS PENGADAAN'
+            # TAHAP 2: BUKA HALAMAN PENGUMUMAN DAN VALIDASI LELANG DENGAN PENYARINGAN KETAT
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
@@ -750,9 +693,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
+                    # Tentukan nilai Jenis Pengadaan resmi dari web SPSE
                     if exact_jenis_pengadaan:
                         cand["Jenis Pengadaan"] = exact_jenis_pengadaan
 
+                    # 🚨 FILTER MUTLAK: Jika Jenis Pengadaan TIDAK ADA dalam 3 Kategori Sah -> LANGSUNG DISCARD!
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -789,7 +734,6 @@ st.caption(
     " Rp 2,5 Miliar Ke Atas."
 )
 
-# INFORMASI STATUS SISTEM PADA SIDEBAR
 st.sidebar.markdown("### 🤖 Status Sistem")
 st.sidebar.success("✅ Pembaruan Otomatis Aktif")
 st.sidebar.info(
@@ -797,7 +741,6 @@ st.sidebar.info(
     "Gunakan filter di halaman utama untuk menganalisis proyek."
 )
 
-# ⚠️ DISCLAIMER KHUSUS SOBAT
 st.sidebar.warning(
     "⚠️ **Disclaimer:**\n\n"
     "Data yang tersaji di platform ini merupakan hasil penarikan otomatis dari situs resmi SPSE. "
@@ -826,12 +769,11 @@ def load_lpse_data():
 df_master = load_lpse_data()
 
 if not df_master.empty:
-    # PEMBERSIHAN OTOMATIS TIPE DATA & DUP
     df_master["ID LPSE"] = df_master["ID LPSE"].astype(str).str.strip()
     df_master["Sumber LPSE"] = df_master["Sumber LPSE"].astype(str).str.strip()
     df_master = df_master.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
 
-    # CLEANER UTAMA: SANITASI PROYEK FISIK LAMA DENGAN FILTER PRESISI
+    # SANITASI MUTLAK DATA DISPLAY
     df_master = clean_df_master(df_master)
 
     if "Tanggal Pembuatan" not in df_master.columns: df_master["Tanggal Pembuatan"] = "-"
@@ -857,7 +799,6 @@ df_aktif = (
     else pd.DataFrame()
 )
 
-# KARTU METRIK UTAMA
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 with col_m1:
     st.markdown(
@@ -909,7 +850,6 @@ KOLOM_DISPLAY = [
     "Nilai Kontrak", "Link"
 ]
 
-# BANNER HIGHLIGHT: HOT SALES OPPORTUNITIES
 st.markdown(
     '<div class="hot-leads-header">🔥 HOT OPPORTUNITIES (Tender Aktif HPS'
     ' ≥ Rp 2,5 Miliar — Urut Tanggal Pembuatan Terbaru)</div>', unsafe_allow_html=True,
@@ -926,7 +866,6 @@ else:
 
 st.markdown("---")
 
-# VISUALISASI GRAFIK INTERAKTIF
 st.subheader("📊 Analisis Pasar Proyek Besar (≥ Rp 2,5 Miliar)")
 if not df_master.empty:
     chart_col1, chart_col2 = st.columns(2)
@@ -950,12 +889,10 @@ else:
 
 st.markdown("---")
 
-# FILTER & DATABASE TABEL INTERAKTIF
 st.subheader("🔍 Filter Database Proyek Utama")
 if not df_master.empty:
     f_c1, f_c2, f_c3, f_c4 = st.columns(4)
     with f_c1:
-        # MENAMPILKAN SELURUH 104 LPSE DI DROPDOWN FILTER
         semua_nama_lpse = sorted(list(set([lpse["nama"] for lpse in DAFTAR_LPSE] + df_master["Sumber LPSE"].unique().tolist())))
         filter_lpse = st.multiselect("Filter Portal LPSE:", options=semua_nama_lpse)
     with f_c2:
@@ -983,7 +920,6 @@ if not df_master.empty:
 else:
     st.info("Belum ada data untuk ditampilkan dalam tabel.")
 
-# TOMBOL DOWNLOAD EXCEL LENGKAP
 try:
     resp = requests.get(GITHUB_RAW_URL)
     excel_bytes = resp.content
