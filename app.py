@@ -426,32 +426,38 @@ def standardize_lpse_link(raw_url, kode_lpse_default="pu"):
     return f"https://spse.inaproc.id/{instansi}/evaluasi/{kode_id}/pemenangberkontrak"
 
 
-def fetch_detail_paket(context, base_domain, kode_id, base_referer):
+ddef fetch_detail_paket(context, base_domain, kode_id, base_referer):
     exact_hps = 0.0
     pemenang = "Belum Ditetapkan"
     nilai_kontrak = 0.0
     tgl_pembuatan = "-"
     exact_jenis_pengadaan = ""
 
+    # JS EXTRACTOR PRESISI: Menyapu baris tabel <tr> untuk Jenis Pengadaan, HPS, dan Tgl Pembuatan
     js_pengumuman_extractor = """
     () => {
         let hps = "";
         let tgl = "-";
         let jenis = "";
-        let ths = document.querySelectorAll('th');
-        for(let th of ths){
-            let txt = th.innerText.toLowerCase();
-            if(txt.includes('tanggal pembuatan')){
-                let td = th.nextElementSibling;
-                if(td && td.tagName.toLowerCase() === 'td') tgl = td.innerText.trim();
+        
+        let trs = document.querySelectorAll('table tr');
+        for (let tr of trs) {
+            let txt = tr.innerText.toLowerCase();
+            
+            // 1. Tarik Jenis Pengadaan (Sesuai yang di-blok di screenshot)
+            if (txt.includes('jenis pengadaan')) {
+                let td = tr.querySelector('td');
+                if (td) jenis = td.innerText.trim();
             }
-            if(txt.includes('hps paket')){
-                let td = th.nextElementSibling;
-                if(td && td.tagName.toLowerCase() === 'td') hps = td.innerText.trim();
+            // 2. Tarik Tanggal Pembuatan
+            if (txt.includes('tanggal pembuatan')) {
+                let td = tr.querySelector('td');
+                if (td) tgl = td.innerText.trim();
             }
-            if(txt.includes('jenis pengadaan')){
-                let td = th.nextElementSibling;
-                if(td && td.tagName.toLowerCase() === 'td') jenis = td.innerText.trim();
+            // 3. Tarik Nilai HPS
+            if (txt.includes('hps paket') || txt.includes('nilai hps')) {
+                let td = tr.querySelector('td');
+                if (td) hps = td.innerText.trim();
             }
         }
         return {tgl: tgl, hps: hps, jenis: jenis};
@@ -502,26 +508,29 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     try:
         dp = context.new_page()
 
-        # 1. Halaman Pengumuman
+        # 1. Buka Halaman Pengumuman Lelang
         url_p = f"{base_domain}/lelang/{kode_id}/pengumumanlelang"
         try:
             dp.goto(url_p, referer=base_referer, wait_until="domcontentloaded", timeout=20000)
             res_pengumuman = dp.evaluate(js_pengumuman_extractor)
             
+            # Ekstrak Tgl Pembuatan
             if res_pengumuman.get('tgl') and res_pengumuman['tgl'] != "-":
                 m = re.search(r"([\d]{1,2}\s+[A-Za-z]+\s+[\d]{4})", res_pengumuman['tgl'])
                 if m: tgl_pembuatan = m.group(1).strip()
                 
+            # Ekstrak HPS Exact
             if res_pengumuman.get('hps'):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
 
+            # Ekstrak Jenis Pengadaan Tepat Dari Blok Halaman
             if res_pengumuman.get('jenis'):
                 exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
 
         except Exception: pass
 
-        # 2. Halaman Evaluasi / Pemenang
+        # 2. Buka Halaman Evaluasi / Pemenang Berkontrak
         endpoints = [
             f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak",
             f"{base_domain}/evaluasi/{kode_id}/pemenang",
@@ -791,8 +800,8 @@ st.sidebar.info(
 # ⚠️ DISCLAIMER KHUSUS SOBAT
 st.sidebar.warning(
     "⚠️ **Disclaimer:**\n\n"
-    "Halo Sobat! Data yang tersaji di platform ini merupakan hasil penarikan (*scraping*) otomatis dari situs resmi SPSE/LPSE. "
-    "Mohon untuk tetap melakukan konfirmasi dan verifikasi ulang secara langsung pada portal resmi LPSE terkait ya, Sobat! 🙏"
+    "Data yang tersaji di platform ini merupakan hasil penarikan otomatis dari situs resmi SPSE. "
+    "Mohon untuk tetap melakukan konfirmasi dan verifikasi ulang secara langsung pada portal resmi SPSE terkait ya, Sobat! 🙏"
 )
 
 st.sidebar.markdown("---")
