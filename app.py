@@ -230,7 +230,7 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER
+# 3. HELPER PARSING & CLEANER FLEKSIBEL
 # ==============================================================================
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -483,7 +483,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (DIRECT BROWSER SCRAPING - ROBUST)
+# 4. SCRAPER ENGINE
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -519,69 +519,70 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 continue
 
             for tahun in target_years:
-                # Buka halaman lelang langsung lewat browser UI untuk bypass proteksi API ajax
-                url_tahun = f"{lpse_url}?tahun={tahun}"
-                try:
-                    page.goto(url_tahun, wait_until="domcontentloaded", timeout=25000)
-                    
-                    # Ambil baris tabel dari halaman HTML langsung
-                    rows_data = page.evaluate("""
-                        () => {
-                            let results = [];
-                            let trs = document.querySelectorAll('table tr');
-                            for (let tr of trs) {
-                                let tds = tr.querySelectorAll('td');
-                                if (tds.length >= 4) {
-                                    results.push({
-                                        kode: tds[0].innerText.trim(),
-                                        nama: tds[1].innerHTML.trim(),
-                                        instansi: tds[2].innerText.trim(),
-                                        tahapan: tds[3].innerText.trim(),
-                                        hps: tds.length > 4 ? tds[4].innerText.trim() : ""
-                                    });
+                kategori_ids = ["3", "4", "8"]
+                for kat_id in kategori_ids:
+                    try:
+                        url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
+                        page.goto(url_query, wait_until="domcontentloaded", timeout=20000)
+                        
+                        rows_data = page.evaluate("""
+                            () => {
+                                let results = [];
+                                let trs = document.querySelectorAll('table tr');
+                                for (let tr of trs) {
+                                    let tds = tr.querySelectorAll('td');
+                                    if (tds.length >= 4) {
+                                        results.push({
+                                            kode: tds[0].innerText.trim(),
+                                            nama: tds[1].innerHTML.trim(),
+                                            instansi: tds[2].innerText.trim(),
+                                            tahapan: tds[3].innerText.trim(),
+                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
+                                        });
+                                    }
                                 }
+                                return results;
                             }
-                            return results;
-                        }
-                    """)
+                        """)
 
-                    if rows_data:
-                        for row in rows_data:
-                            kode_id = row.get("kode", "")
-                            if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
-                            if kode_id in candidates_dict: continue
+                        if rows_data:
+                            for row in rows_data:
+                                kode_id = row.get("kode", "")
+                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
+                                if kode_id in candidates_dict: continue
 
-                            cell_nama_raw = row.get("nama", "")
-                            instansi = row.get("instansi", "")
-                            tahapan_raw = row.get("tahapan", "")
-                            hps_raw = row.get("hps", "")
+                                cell_nama_raw = row.get("nama", "")
+                                instansi = row.get("instansi", "")
+                                tahapan_raw = row.get("tahapan", "")
+                                hps_raw = row.get("hps", "")
 
-                            clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
-                            tahapan_clean = normalize_tahapan(tahapan_raw)
+                                clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+                                tahapan_clean = normalize_tahapan(tahapan_raw)
 
-                            hps_val = parse_rupiah_pintar(hps_raw, "HPS")
-                            if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
+                                hps_val = parse_rupiah_pintar(hps_raw, "HPS")
+                                if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
 
-                            if hps_val >= BATAS_MINIMAL_HPS:
-                                match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
-                                if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
-                                else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
+                                if hps_val >= BATAS_MINIMAL_HPS:
+                                    match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
+                                    if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
+                                    else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
 
-                                nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
-                                link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
+                                    nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
+                                    link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
 
-                                candidates_dict[kode_id] = {
-                                    "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
-                                    "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
-                                    "HPS": float(hps_val), "Metode": "Seleksi / Tender",
-                                    "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                    "Jenis Pengadaan": "Jasa Konsultansi", "Tahun Anggaran": tahun, 
-                                    "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
-                                    "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                }
-                except Exception: pass
+                                    label_kat = "Jasa Konsultansi Badan Usaha Konstruksi" if kat_id == "4" else ("Jasa Konsultansi Badan Usaha Non Konstruksi" if kat_id == "3" else "Pekerjaan Konstruksi Terintegrasi")
 
-            # TAHAP 2: VERIFIKASI PRESISI DETAIL PENGUMUMAN
+                                    candidates_dict[kode_id] = {
+                                        "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
+                                        "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
+                                        "HPS": float(hps_val), "Metode": "Seleksi / Tender",
+                                        "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
+                                        "Jenis Pengadaan": label_kat, "Tahun Anggaran": tahun, 
+                                        "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
+                                        "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    }
+                    except Exception: pass
+
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
@@ -630,8 +631,22 @@ st.caption("Platform Radar Lelang Prioritas Tinggi — Memantau Hanya Proyek Ber
 
 st.sidebar.markdown("### 🤖 Status Sistem")
 st.sidebar.success("✅ Pembaruan Otomatis Aktif")
-st.sidebar.info("Database diperbarui secara otomatis setiap hari via **GitHub Actions**.")
+st.sidebar.info(
+    "Database diperbarui secara otomatis setiap hari via **GitHub Actions**.\n\n"
+    "Gunakan filter di halaman utama untuk menganalisis proyek."
+)
 
+st.sidebar.warning(
+    "⚠️ **Disclaimer:**\n\n"
+    "Data yang tersaji di platform ini merupakan hasil penarikan otomatis dari situs resmi SPSE. "
+    "Mohon untuk tetap melakukan konfirmasi dan verifikasi ulang secara langsung pada portal resmi SPSE terkait ya, Sobat! 🙏"
+)
+
+st.sidebar.markdown("---")
+
+# ==============================================================================
+# 6. DISPLAY DATA & VISUALISASI MEWAH (LANGSUNG DARI GITHUB RAW URL)
+# ==============================================================================
 @st.cache_data(ttl=60)
 def load_lpse_data():
     cache_buster_url = f"{GITHUB_RAW_URL}?v={int(time.time())}"
@@ -640,7 +655,7 @@ def load_lpse_data():
         if response.status_code == 200:
             return pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
     except Exception as e:
-        pass
+        st.warning(f"⚠️ Gagal memuat data dari GitHub: {e}")
     
     if os.path.exists(FILE_EXCEL_OUTPUT):
         return pd.read_excel(FILE_EXCEL_OUTPUT)
@@ -680,15 +695,47 @@ df_aktif = (
 
 col_m1, col_m2, col_m3, col_m4 = st.columns(4)
 with col_m1:
-    st.markdown(f"""<div class="metric-card"><div class="metric-label">🚨 Tender Aktif (Pipeline ≥ 2.5M)</div><div class="metric-value">{len(df_aktif):,} <span style="font-size: 1rem;">Paket</span></div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">🚨 Tender Aktif (Pipeline ≥ 2.5M)</div>
+            <div class="metric-value">{len(df_aktif):,} <span style="font-size: 1rem;">Paket</span></div>
+            <div class="metric-sub">Peluang Siap Diikuti</div>
+        </div>
+        """, unsafe_allow_html=True,
+    )
 with col_m2:
     val_hps_aktif = df_aktif["HPS"].sum() if not df_aktif.empty else 0.0
-    st.markdown(f"""<div class="metric-card"><div class="metric-label">💰 Potensi Pasar Aktif</div><div class="metric-value">{format_rupiah_eksekutif(val_hps_aktif)}</div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">💰 Potensi Pasar Aktif</div>
+            <div class="metric-value">{format_rupiah_eksekutif(val_hps_aktif)}</div>
+            <div class="metric-sub">Estimasi HPS Berjalan</div>
+        </div>
+        """, unsafe_allow_html=True,
+    )
 with col_m3:
     val_kontrak = df_master["Nilai Kontrak"].sum() if not df_master.empty else 0.0
-    st.markdown(f"""<div class="metric-card"><div class="metric-label">🏆 Total Kontrak Tersebar</div><div class="metric-value">{format_rupiah_eksekutif(val_kontrak)}</div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">🏆 Total Kontrak Tersebar</div>
+            <div class="metric-value">{format_rupiah_eksekutif(val_kontrak)}</div>
+            <div class="metric-sub">Pemenang Ditetapkan</div>
+        </div>
+        """, unsafe_allow_html=True,
+    )
 with col_m4:
-    st.markdown(f"""<div class="metric-card"><div class="metric-label">📦 Total Paket (≥ 2,5M)</div><div class="metric-value">{len(df_master):,} <span style="font-size: 1rem;">Paket</span></div></div>""", unsafe_allow_html=True)
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">📦 Total Paket (≥ 2,5M)</div>
+            <div class="metric-value">{len(df_master):,} <span style="font-size: 1rem;">Paket</span></div>
+            <div class="metric-sub">Lintas LPSE Nasional</div>
+        </div>
+        """, unsafe_allow_html=True,
+    )
 
 st.markdown("<br>", unsafe_allow_html=True)
 KOLOM_DISPLAY = [
@@ -697,7 +744,10 @@ KOLOM_DISPLAY = [
     "Nilai Kontrak", "Link"
 ]
 
-st.markdown('<div class="hot-leads-header">🔥 HOT OPPORTUNITIES (Tender Aktif HPS ≥ Rp 2,5 Miliar)</div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="hot-leads-header">🔥 HOT OPPORTUNITIES (Tender Aktif HPS'
+    ' ≥ Rp 2,5 Miliar — Urut Tanggal Pembuatan Terbaru)</div>', unsafe_allow_html=True,
+)
 if not df_aktif.empty:
     df_hot_show = df_aktif.head(10).copy()
     cols_exist = [c for c in KOLOM_DISPLAY if c in df_hot_show.columns]
@@ -709,6 +759,30 @@ else:
     st.info("Belum ditemukan tender aktif berkategori HPS ≥ Rp 2,5 Miliar.")
 
 st.markdown("---")
+
+st.subheader("📊 Analisis Pasar Proyek Besar (≥ Rp 2,5 Miliar)")
+if not df_master.empty:
+    chart_col1, chart_col2 = st.columns(2)
+    with chart_col1:
+        fig_status = px.pie(
+            df_master, names="Tahapan", hole=0.4, title="<b>Distribusi Tahapan Tender (≥ 2,5M)</b>"
+        )
+        fig_status.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#F8FAFC"))
+        st.plotly_chart(fig_status, use_container_width=True)
+    with chart_col2:
+        df_lpse_sum = df_master.groupby("Sumber LPSE")["HPS"].sum().reset_index().sort_values(by="HPS", ascending=False).head(7)
+        fig_lpse = px.bar(
+            df_lpse_sum, x="HPS", y="Sumber LPSE", orientation="h",
+            title="<b>Top 7 LPSE dengan Nilai Pasar Proyek Besar Terbesar</b>",
+            color="HPS", color_continuous_scale="Blues"
+        )
+        fig_lpse.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#F8FAFC"), xaxis_title="Total Nilai HPS (Rupiah)", yaxis_title="")
+        st.plotly_chart(fig_lpse, use_container_width=True)
+else:
+    st.info("Visualisasi grafik belum tersedia karena data masih kosong.")
+
+st.markdown("---")
+
 st.subheader("🔍 Filter Database Proyek Utama")
 if not df_master.empty:
     f_c1, f_c2, f_c3, f_c4 = st.columns(4)
@@ -739,3 +813,21 @@ if not df_master.empty:
     st.dataframe(df_display_filtered, column_config={"Link": st.column_config.LinkColumn("Detail SPSE")}, use_container_width=True, height=450)
 else:
     st.info("Belum ada data untuk ditampilkan dalam tabel.")
+
+try:
+    resp = requests.get(GITHUB_RAW_URL)
+    excel_bytes = resp.content
+except Exception:
+    if os.path.exists(FILE_EXCEL_OUTPUT):
+        with open(FILE_EXCEL_OUTPUT, "rb") as f:
+            excel_bytes = f.read()
+    else:
+        excel_bytes = b""
+
+st.download_button(
+    label="📥 Download Master Excel Lelang (HPS ≥ 2.5M) (.xlsx)",
+    data=excel_bytes,
+    file_name="Hasil_Penarikan_LPSE_Nasional_Final.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    type="primary",
+)
