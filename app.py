@@ -288,7 +288,7 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    FILTRASI MUTLAK HANYA 3 KATEGORI SAH
+    FILTRASI MUTLAK HANYA 3 KATEGORI SAH (TIDAK BOLEH LEPAS)
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
@@ -462,7 +462,7 @@ def save_and_update_excel(df_new, file_output):
             df_existing["Sumber LPSE"] = df_existing["Sumber LPSE"].astype(str).str.strip()
             
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
+            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "Nama Paket"], keep="last")
         except Exception: 
             df_final = df_new
     else:
@@ -479,7 +479,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (PENARIKAN KHUSUS KATEGORI RESMI 3, 4, 8)
+# 4. SCRAPER ENGINE (DENGAN "SABAR MENUNGGU" KATEGORI)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -500,25 +500,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         )
         page = context.new_page()
 
-        # FETCH LANGSUNG API KATEGORI RESMI (3=Konsultansi Non Konstruksi, 4=Konsultansi Konstruksi, 8=Terintegrasi)
-        js_auto_fetcher = """
-        async (args) => {
-            const { baseDomain, tahun, katId } = args;
-            let url = `${baseDomain}/dt/lelang?draw=1&start=0&length=300&tahun=${tahun}&kategoriId=${katId}`;
-            try {
-                const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-                if (resp.ok) {
-                    const json = await resp.json();
-                    if (json && json.data && Array.isArray(json.data)) {
-                        return json.data;
-                    }
-                }
-            } catch(e) {}
-            return [];
-        }
-        """
-
-        # MAPPING KATEGORI RESMI
+        # MAPPING KATEGORI RESMI YANG DIKEHENDAKI
         KAT_MAP = {
             "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
             "4": "Jasa Konsultansi Badan Usaha Konstruksi",
@@ -531,7 +513,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membuka Portal & Menyedot Kategori Resmi: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membuka Portal & Menunggu Data: **{lpse_nama}**...")
 
             try: 
                 page.goto(lpse_url, wait_until="domcontentloaded", timeout=30000)
@@ -542,21 +524,48 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             for tahun in target_years:
                 for kat_id, kat_label in KAT_MAP.items():
                     try:
-                        raw_dt_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun, "katId": kat_id})
-                    except Exception:
-                        raw_dt_data = []
+                        url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
+                        page.goto(url_query, wait_until="domcontentloaded", timeout=25000)
+                        
+                        # KUNCI UTAMA AGAR TIDAK KOSONG: Tunggu spinner "Processing..." SPSE hilang!
+                        try:
+                            page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=15000)
+                        except Exception:
+                            pass 
 
-                    if raw_dt_data:
-                        for row in raw_dt_data:
-                            if isinstance(row, list) and len(row) >= 4:
-                                kode_id = str(row[0]).strip()
-                                if not kode_id.isdigit() or len(kode_id) < 7: continue
+                        rows_data = page.evaluate("""
+                            () => {
+                                let results = [];
+                                let trs = document.querySelectorAll('table tbody tr');
+                                for (let tr of trs) {
+                                    let tds = tr.querySelectorAll('td');
+                                    if (tds.length >= 4) {
+                                        // Abaikan baris "Tidak ada data"
+                                        if (tds.length === 1 && tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
+                                        
+                                        results.push({
+                                            kode: tds[0].innerText.trim(),
+                                            nama: tds[1].innerHTML.trim(),
+                                            instansi: tds[2].innerText.trim(),
+                                            tahapan: tds[3].innerText.trim(),
+                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
+                                        });
+                                    }
+                                }
+                                return results;
+                            }
+                        """)
+
+                        if rows_data:
+                            for row in rows_data:
+                                kode_id = row.get("kode", "")
+                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
                                 if kode_id in candidates_dict: continue
 
-                                cell_nama_raw = str(row[1]).strip()
-                                instansi = str(row[2]).strip()
-                                tahapan_raw = str(row[3]).strip()
-                                hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
+                                cell_nama_raw = row.get("nama", "")
+                                instansi = row.get("instansi", "")
+                                tahapan_raw = row.get("tahapan", "")
+                                hps_raw = row.get("hps", "")
 
                                 clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
                                 tahapan_clean = normalize_tahapan(tahapan_raw)
@@ -581,6 +590,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                         "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
                                         "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     }
+                    except Exception: pass
 
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
