@@ -199,6 +199,7 @@ DAFTAR_LPSE = [
     {"nama": "Kota Jayapura", "url": "https://spse.inaproc.id/jayapura/lelang"},
 ]
 
+# 3 KATEGORI RESMI MUTLAK
 ALL_3_CATEGORIES = [
     "Jasa Konsultansi Badan Usaha Konstruksi",
     "Jasa Konsultansi Badan Usaha Non Konstruksi",
@@ -230,7 +231,7 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER FLEKSIBEL
+# 3. HELPER PARSING & CLEANER MUTLAK 3 KATEGORI
 # ==============================================================================
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -286,22 +287,17 @@ def extract_nilai_kontrak_from_text(text):
     return 0.0
 
 def clean_df_master(df):
+    """
+    FILTRASI MUTLAK HANYA 3 KATEGORI SAH
+    """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
     df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
 
-    def is_valid_row(row):
-        jp = str(row.get("Jenis Pengadaan", "")).lower()
-        if any(cat.lower() in jp for cat in ALL_3_CATEGORIES):
-            return True
-        if "konsultansi" in jp or "terintegrasi" in jp:
-            return True
-        return False
-
-    mask = df.apply(is_valid_row, axis=1)
-    return df[mask].reset_index(drop=True)
+    # Hanya menyisakan baris yang Jenis Pengadaan-nya persis SAMA dengan ALL_3_CATEGORIES
+    return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
     t_clean = re.sub(r"<[^>]+>", " ", str(tahapan_raw)).strip()
@@ -483,7 +479,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (DENGAN WAIT FOR SELECTOR AGAR TIDAK KOSONG)
+# 4. SCRAPER ENGINE (PENARIKAN KHUSUS KATEGORI RESMI 3, 4, 8)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -504,13 +500,38 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         )
         page = context.new_page()
 
+        # FETCH LANGSUNG API KATEGORI RESMI (3=Konsultansi Non Konstruksi, 4=Konsultansi Konstruksi, 8=Terintegrasi)
+        js_auto_fetcher = """
+        async (args) => {
+            const { baseDomain, tahun, katId } = args;
+            let url = `${baseDomain}/dt/lelang?draw=1&start=0&length=300&tahun=${tahun}&kategoriId=${katId}`;
+            try {
+                const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                if (resp.ok) {
+                    const json = await resp.json();
+                    if (json && json.data && Array.isArray(json.data)) {
+                        return json.data;
+                    }
+                }
+            } catch(e) {}
+            return [];
+        }
+        """
+
+        # MAPPING KATEGORI RESMI
+        KAT_MAP = {
+            "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
+            "4": "Jasa Konsultansi Badan Usaha Konstruksi",
+            "8": "Pekerjaan Konstruksi Terintegrasi"
+        }
+
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama = lpse["nama"]
             lpse_url = lpse["url"]
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membuka Portal LPSE: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membuka Portal & Menyedot Kategori Resmi: **{lpse_nama}**...")
 
             try: 
                 page.goto(lpse_url, wait_until="domcontentloaded", timeout=30000)
@@ -519,48 +540,23 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 continue
 
             for tahun in target_years:
-                kategori_ids = ["3", "4", "8"]
-                for kat_id in kategori_ids:
+                for kat_id, kat_label in KAT_MAP.items():
                     try:
-                        url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
-                        page.goto(url_query, wait_until="domcontentloaded", timeout=20000)
-                        
-                        # TUNGGU TABEL MUNCUL AGAR TIDAK KOSONG SAAT DI-RELOAD
-                        try:
-                            page.wait_for_selector('table tbody tr', timeout=15000)
-                        except Exception:
-                            pass # Lanjut saja jika tabel memang tidak ada (kosong dari sananya)
-                        
-                        rows_data = page.evaluate("""
-                            () => {
-                                let results = [];
-                                let trs = document.querySelectorAll('table tr');
-                                for (let tr of trs) {
-                                    let tds = tr.querySelectorAll('td');
-                                    if (tds.length >= 4) {
-                                        results.push({
-                                            kode: tds[0].innerText.trim(),
-                                            nama: tds[1].innerHTML.trim(),
-                                            instansi: tds[2].innerText.trim(),
-                                            tahapan: tds[3].innerText.trim(),
-                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
-                                        });
-                                    }
-                                }
-                                return results;
-                            }
-                        """)
+                        raw_dt_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun, "katId": kat_id})
+                    except Exception:
+                        raw_dt_data = []
 
-                        if rows_data:
-                            for row in rows_data:
-                                kode_id = row.get("kode", "")
-                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
+                    if raw_dt_data:
+                        for row in raw_dt_data:
+                            if isinstance(row, list) and len(row) >= 4:
+                                kode_id = str(row[0]).strip()
+                                if not kode_id.isdigit() or len(kode_id) < 7: continue
                                 if kode_id in candidates_dict: continue
 
-                                cell_nama_raw = row.get("nama", "")
-                                instansi = row.get("instansi", "")
-                                tahapan_raw = row.get("tahapan", "")
-                                hps_raw = row.get("hps", "")
+                                cell_nama_raw = str(row[1]).strip()
+                                instansi = str(row[2]).strip()
+                                tahapan_raw = str(row[3]).strip()
+                                hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
 
                                 clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
                                 tahapan_clean = normalize_tahapan(tahapan_raw)
@@ -576,18 +572,15 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                     nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
                                     link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
 
-                                    label_kat = "Jasa Konsultansi Badan Usaha Konstruksi" if kat_id == "4" else ("Jasa Konsultansi Badan Usaha Non Konstruksi" if kat_id == "3" else "Pekerjaan Konstruksi Terintegrasi")
-
                                     candidates_dict[kode_id] = {
                                         "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
                                         "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
                                         "HPS": float(hps_val), "Metode": "Seleksi / Tender",
                                         "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                        "Jenis Pengadaan": label_kat, "Tahun Anggaran": tahun, 
+                                        "Jenis Pengadaan": kat_label, "Tahun Anggaran": tahun, 
                                         "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
                                         "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                     }
-                    except Exception: pass
 
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
@@ -604,6 +597,10 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
 
                     if exact_jenis_pengadaan:
                         cand["Jenis Pengadaan"] = exact_jenis_pengadaan
+
+                    # VERIFIKASI MUTLAK 3 KATEGORI
+                    if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
+                        continue
 
                     cand["Tanggal Pembuatan"] = tgl_pembuatan if tgl_pembuatan != "-" else "-"
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
