@@ -471,7 +471,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MEMBACA DYNAMIC KATEGORI & PAGINASI)
+# 4. SCRAPER ENGINE (MENCEGAT JSON DARI API SERVER INAPROC)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -492,67 +492,12 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        page = context.new_page()
 
-        js_auto_fetcher = """
-        async (args) => {
-            const { baseDomain, tahun, maxPages } = args;
-            let allRows = [];
-            
-            let targetCats = [];
-            const selects = document.querySelectorAll('select');
-            for (let sel of selects) {
-                for (let opt of sel.options) {
-                    let txt = opt.innerText.trim().toLowerCase();
-                    if ((txt.includes('konsultansi') && txt.includes('badan usaha')) || txt.includes('terintegrasi')) {
-                        if (opt.value && opt.value !== "") {
-                            targetCats.push({ id: opt.value, label: opt.innerText.trim() });
-                        }
-                    }
-                }
-            }
-            
-            if (targetCats.length === 0) {
-                targetCats = [
-                    { id: "3", label: "Jasa Konsultansi Badan Usaha Non Konstruksi" },
-                    { id: "4", label: "Jasa Konsultansi Badan Usaha Konstruksi" },
-                    { id: "8", label: "Pekerjaan Konstruksi Terintegrasi" }
-                ];
-            }
-            
-            for (const catObj of targetCats) {
-                let start = 0; 
-                const length = 100;
-                let total = 1;
-                let pagesFetched = 0;
-                
-                while (start < total && pagesFetched < maxPages) {
-                    let url = `${baseDomain}/dt/lelang?draw=1&start=${start}&length=${length}&tahun=${tahun}`;
-                    if (catObj.id !== "") {
-                        url += `&kategoriId=${catObj.id}`;
-                    }
-                    try {
-                        const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-                        if (!resp.ok) break;
-                        const json = await resp.json();
-                        if (json && json.data && Array.isArray(json.data)) {
-                            const rowsWithCat = json.data.map(r => { 
-                                return { rowData: r, categoryId: catObj.id, categoryLabel: catObj.label }; 
-                            });
-                            allRows = allRows.concat(rowsWithCat);
-                            total = json.recordsFiltered || json.recordsTotal || json.data.length;
-                            if (json.data.length === 0) break;
-                        } else { break; }
-                    } catch(e) { break; }
-                    start += length;
-                    pagesFetched++;
-                    const jedaAcak = Math.floor(Math.random() * (2000 - 1000 + 1)) + 1000;
-                    await new Promise(r => setTimeout(r, jedaAcak));
-                }
-            }
-            return allRows;
+        KAT_MAP = {
+            "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
+            "4": "Jasa Konsultansi Badan Usaha Konstruksi",
+            "8": "Pekerjaan Konstruksi Terintegrasi"
         }
-        """
 
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama = lpse["nama"]
@@ -560,74 +505,71 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membedah Kategori & Menarik Data: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Mencegat Data API SPSE: **{lpse_nama}**...")
 
-            try: page.goto(lpse_url, wait_until="domcontentloaded", timeout=30000)
-            except Exception:
-                log_container.warning(f"⚠️ Server Tidak Merespon ({lpse_nama})")
-                continue
+            page = context.new_page()
 
             for tahun in target_years:
-                try: raw_dt_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun, "maxPages": max_pages})
-                except Exception: raw_dt_data = []
-
-                if raw_dt_data:
-                    for item in raw_dt_data:
-                        cat_label = item.get("categoryLabel", "")
-                        row = item.get("rowData", [])
+                for kat_id, kat_label in KAT_MAP.items():
+                    url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
+                    rows_data = []
+                    
+                    # -------------------------------------------------------------
+                    # TRIK ANTI-NGEBUT: Cegat Data Mentah Langsung dari Server API
+                    # -------------------------------------------------------------
+                    try:
+                        with page.expect_response(lambda r: "dt/lelang" in r.url.lower() and r.request.resource_type in ["xhr", "fetch"], timeout=20000) as response_info:
+                            page.goto(url_query, wait_until="domcontentloaded")
                         
-                        if isinstance(row, list) and len(row) >= 4:
-                            kode_id = str(row[0]).strip()
-                            if not kode_id.isdigit() or len(kode_id) < 7: continue
-                            if kode_id in candidates_dict: continue
+                        resp = response_info.value
+                        json_data = resp.json()
+                        rows_data = json_data.get("data", [])
+                    except Exception:
+                        pass # Lewati jika server down atau memang tidak ada proyek sama sekali
+                        
+                    if rows_data:
+                        for row in rows_data:
+                            if isinstance(row, list) and len(row) >= 4:
+                                kode_id = str(row[0]).strip()
+                                if not kode_id.isdigit() or len(kode_id) < 7: continue
+                                if kode_id in candidates_dict: continue
 
-                            cell_nama_raw = str(row[1]).strip()
-                            instansi = str(row[2]).strip()
-                            tahapan_raw = str(row[3]).strip()
-                            hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
+                                cell_nama_raw = str(row[1]).strip()
+                                instansi = str(row[2]).strip()
+                                tahapan_raw = str(row[3]).strip()
+                                hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
 
-                            clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
-                            tahapan_clean = normalize_tahapan(tahapan_raw)
+                                clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+                                tahapan_clean = normalize_tahapan(tahapan_raw)
 
-                            cat_lower = str(cat_label).lower()
-                            jenis_matched = None
-                            
-                            if "terintegrasi" in cat_lower:
-                                jenis_matched = "Pekerjaan Konstruksi Terintegrasi"
-                            elif "non" in cat_lower and "konsultansi" in cat_lower:
-                                jenis_matched = "Jasa Konsultansi Badan Usaha Non Konstruksi"
-                            elif "konsultansi" in cat_lower and "konstruksi" in cat_lower and "non" not in cat_lower:
-                                jenis_matched = "Jasa Konsultansi Badan Usaha Konstruksi"
+                                hps_val = parse_rupiah_pintar(hps_raw, "HPS")
+                                if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
 
-                            if not jenis_matched:
-                                continue
+                                if hps_val >= BATAS_MINIMAL_HPS:
+                                    match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
+                                    if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
+                                    else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
 
-                            hps_val = parse_rupiah_pintar(hps_raw, "HPS")
-                            if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
+                                    nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
+                                    link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
 
-                            if hps_val >= BATAS_MINIMAL_HPS:
-                                match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
-                                if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
-                                else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
+                                    candidates_dict[kode_id] = {
+                                        "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
+                                        "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
+                                        "HPS": float(hps_val), "Metode": "Seleksi / Tender",
+                                        "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
+                                        "Jenis Pengadaan": kat_label, # MENGGUNAKAN LABEL KATEGORI RESMI
+                                        "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
+                                        "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
+                                        "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    }
 
-                                nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
-                                link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
-
-                                candidates_dict[kode_id] = {
-                                    "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
-                                    "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
-                                    "HPS": float(hps_val), "Metode": "Seleksi / Tender",
-                                    "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                    "Jenis Pengadaan": jenis_matched,
-                                    "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
-                                    "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
-                                    "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                }
+            page.close()
 
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
-                log_container.info(f"🔍 Mengambil Detail Presisi untuk {len(candidates_lpse)} paket sah dari ({lpse_nama})...")
+                log_container.info(f"🔍 Memeriksa Detail {len(candidates_lpse)} Kandidat Paket (≥ 2.5M) dari ({lpse_nama})...")
                 
                 valid_candidates = []
                 for i, cand in enumerate(candidates_lpse):
@@ -637,6 +579,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
+                    # VERIFIKASI MUTLAK: 100% Mengunci 3 Kategori
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -652,10 +595,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     df_lpse = pd.DataFrame(valid_candidates, columns=KOLOM_TARGET)
                     save_and_update_excel(df_lpse, FILE_EXCEL_OUTPUT)
                     all_scraped_data.extend(valid_candidates)
-                    log_container.success(f"🎉 [{lpse_nama}] Sukses Menemukan {len(valid_candidates)} Paket Valid 3 Kategori!")
+                    log_container.success(f"🎉 [{lpse_nama}] Berhasil Menyimpan {len(valid_candidates)} Paket Valid 3 Kategori!")
 
         browser.close()
 
+    # PENGAMAN TERAKHIR: Paksa Buat File Kalau Masih Belum Ada
     if all_scraped_data:
         df_all = pd.DataFrame(all_scraped_data, columns=KOLOM_TARGET)
         save_and_update_excel(df_all, FILE_EXCEL_OUTPUT)
