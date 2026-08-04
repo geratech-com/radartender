@@ -199,7 +199,7 @@ DAFTAR_LPSE = [
     {"nama": "Kota Jayapura", "url": "https://spse.inaproc.id/jayapura/lelang"},
 ]
 
-# 3 KATEGORI MUTLAK YANG BOLEH ADA DI DASHBOARD
+# 3 KATEGORI RESMI MUTLAK
 ALL_3_CATEGORIES = [
     "Jasa Konsultansi Badan Usaha Konstruksi",
     "Jasa Konsultansi Badan Usaha Non Konstruksi",
@@ -250,7 +250,7 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER PINTAR (SUPER KETAT)
+# 3. HELPER PARSING & CLEANER PINTAR (FILTRASI MURNI STRUKTUR KOLOM)
 # ==============================================================================
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -307,54 +307,17 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    FILTRASI SUPER KETAT:
-    Membuang seluruh proyek konstruksi fisik murni dari data lama/excel.
+    FILTRASI MUTLAK TANPA TEBAK JUDUL:
+    HANYA menyisakan baris yang nilai 'Jenis Pengadaan'-nya SAMA PERSIS dengan ALL_3_CATEGORIES.
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
     df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
-    df["Nama Paket"] = df["Nama Paket"].astype(str).str.strip()
 
-    # 1. Wajib masuk 3 Kategori Sah
-    df = df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)]
-
-    # 2. PEMBERSIH KATAKUNCI JUDUL (Membuang Proyek Fisik Kontraktor)
-    consultancy_keywords = [
-        "konsultansi", "konsultan", "supervisi", "pengawasan", "perencanaan",
-        "perancangan", "manajemen konstruksi", "mk", "ded", "studi", "kajian",
-        "masterplan", "survey", "investigasi", "amdal", "fs", "feasibility",
-        "pendampingan", "penyusunan", "evaluasi"
-    ]
-    
-    physical_keywords = [
-        "pembangunan", "pekerjaan konstruksi", "pengadaan konstruksi",
-        "pelaksanaan", "renovasi", "rehabilitasi", "pemeliharaan",
-        "penataan", "pengerukan", "pemasangan", "pengendalian", "normalisasi",
-        "peningkatan", "revitalisasi", "fasum", "rumdin"
-    ]
-
-    def is_valid_package(row):
-        jenis = str(row.get("Jenis Pengadaan", "")).strip()
-        nama = str(row.get("Nama Paket", "")).lower().strip()
-
-        # Terintegrasi -> Boleh Lolos (karena rancang bangun fisik + perancangan)
-        if jenis == "Pekerjaan Konstruksi Terintegrasi" or "terintegrasi" in nama:
-            return True
-
-        # Untuk Jasa Konsultansi (Konstruksi & Non Konstruksi):
-        # Jika judul memuat proyek fisik DAN TIDAK ADA kata kunci konsultansi/supervisi -> DISCARD!
-        has_physical = any(pk in nama for pk in physical_keywords)
-        has_consultancy = any(ck in nama for ck in consultancy_keywords)
-
-        if has_physical and not has_consultancy:
-            return False
-
-        return True
-
-    mask = df.apply(is_valid_package, axis=1)
-    return df[mask].reset_index(drop=True)
+    # Hanya menyisakan 3 Kategori Resmi
+    return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
     t_clean = re.sub(r"<[^>]+>", " ", str(tahapan_raw)).strip()
@@ -415,6 +378,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     tgl_pembuatan = "-"
     exact_jenis_pengadaan = ""
 
+    # EXTRACTOR UTAMA: BACA LANGSUNG SEL ISI KEDUA (children[1]) PADA HALAMAN SPSE
     js_pengumuman_extractor = """
     () => {
         let hps = "";
@@ -423,19 +387,19 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         
         let trs = document.querySelectorAll('table tr');
         for (let tr of trs) {
-            let txt = tr.innerText.toLowerCase();
-            
-            if (txt.includes('jenis pengadaan')) {
-                let td = tr.querySelector('td');
-                if (td) jenis = td.innerText.trim();
-            }
-            if (txt.includes('tanggal pembuatan')) {
-                let td = tr.querySelector('td');
-                if (td) tgl = td.innerText.trim();
-            }
-            if (txt.includes('hps paket') || txt.includes('nilai hps')) {
-                let td = tr.querySelector('td');
-                if (td) hps = td.innerText.trim();
+            if (tr.children.length >= 2) {
+                let label = tr.children[0].innerText.toLowerCase().trim();
+                let val = tr.children[1].innerText.trim();
+                
+                if (label.includes('jenis pengadaan')) {
+                    jenis = val;
+                }
+                if (label.includes('tanggal pembuatan')) {
+                    tgl = val;
+                }
+                if (label.includes('hps paket') || label.includes('nilai hps')) {
+                    hps = val;
+                }
             }
         }
         return {tgl: tgl, hps: hps, jenis: jenis};
@@ -500,6 +464,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
 
+            # Teks Jenis Pengadaan Asli dari Layar SPSE
             if res_pengumuman.get('jenis'):
                 exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
 
@@ -567,7 +532,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MAPPING PERSISI KATEGORI)
+# 4. SCRAPER ENGINE
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -685,17 +650,12 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                             cat_lower = str(cat_label).lower()
                             jenis_matched = None
                             
-                            # LOGIKA MAPPING PRESISI (WAJIB ADA KATA KONSULTANSI UNTUK JASA KONSULTANSI)
                             if "terintegrasi" in cat_lower:
                                 jenis_matched = "Pekerjaan Konstruksi Terintegrasi"
                             elif "non" in cat_lower and "konsultansi" in cat_lower:
                                 jenis_matched = "Jasa Konsultansi Badan Usaha Non Konstruksi"
                             elif "konsultansi" in cat_lower and "konstruksi" in cat_lower and "non" not in cat_lower:
                                 jenis_matched = "Jasa Konsultansi Badan Usaha Konstruksi"
-
-                            # KUNCI 1: Jika tidak masuk salah satu dari 3 Kategori Sah -> LANGSUNG DISCARD!
-                            if jenis_matched not in ALL_3_CATEGORIES:
-                                continue
 
                             hps_val = parse_rupiah_pintar(hps_raw, "HPS")
                             if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
@@ -713,12 +673,13 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                     "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
                                     "HPS": float(hps_val), "Metode": "Seleksi / Tender",
                                     "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                    "Jenis Pengadaan": jenis_matched, "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
+                                    "Jenis Pengadaan": jenis_matched if jenis_matched else cat_label, 
+                                    "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
                                     "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
                                     "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 }
 
-            # TAHAP 2: BUKA HALAMAN PENGUMUMAN SPSE UNTUK VERIFIKASI PRESISI
+            # TAHAP 2: BUKA HALAMAN DETAIL PENGUMUMAN & CEK MUTLAK STRING 'JENIS PENGADAAN'
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
@@ -732,10 +693,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
+                    # Jika halaman SPSE mengembalikan nilai resmi Jenis Pengadaan, timpa variabel
                     if exact_jenis_pengadaan:
                         cand["Jenis Pengadaan"] = exact_jenis_pengadaan
 
-                    # KUNCI 2: Verifikasi ulang, Wajib masuk 3 Kategori Utama!
+                    # 🚨 FILTER MUTLAK 100%: HANYA LOLOSKAN JIKA SAMA PERSIS DENGAN 3 KATEGORI
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -811,7 +773,7 @@ if not df_master.empty:
     df_master["Sumber LPSE"] = df_master["Sumber LPSE"].astype(str).str.strip()
     df_master = df_master.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
 
-    # SANITASI SUPER KETAT PADA TAMPILAN DASHBOARD
+    # CLEANING FINAL PADA DASHBOARD: MEMBUANG APAPUN YANG BUKAN 3 KATEGORI
     df_master = clean_df_master(df_master)
 
     if "Tanggal Pembuatan" not in df_master.columns: df_master["Tanggal Pembuatan"] = "-"
