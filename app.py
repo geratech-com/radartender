@@ -231,7 +231,7 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER MUTLAK 3 KATEGORI
+# 3. HELPER PARSING & CLEANER KETAT
 # ==============================================================================
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -288,7 +288,7 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    FILTRASI MUTLAK HANYA 3 KATEGORI SAH (TIDAK BOLEH LEPAS)
+    FILTRASI MUTLAK: HANYA MELOLOSKAN 3 KATEGORI RESMI.
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
@@ -296,7 +296,7 @@ def clean_df_master(df):
     df = df.copy()
     df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
 
-    # Hanya menyisakan baris yang Jenis Pengadaan-nya persis SAMA dengan ALL_3_CATEGORIES
+    # KUNCI 100% DI SINI
     return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
@@ -356,28 +356,27 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     pemenang = "Belum Ditetapkan"
     nilai_kontrak = 0.0
     tgl_pembuatan = "-"
-    exact_jenis_pengadaan = ""
+    
+    # PERHATIAN: Skrip ini DILARANG KERAS mengekstrak/menimpa label "Jenis Pengadaan" 
+    # agar tidak merusak filter mutlak 3 kategori dari langkah sebelumnya.
 
     js_pengumuman_extractor = """
     () => {
         let hps = "";
         let tgl = "-";
-        let jenis = "";
-        let bodyText = document.body.innerText;
-        let lines = bodyText.split('\\n');
-        for (let i = 0; i < lines.length; i++) {
-            let line = lines[i].toLowerCase().trim();
-            if (line.includes('jenis pengadaan') && i + 1 < lines.length) {
-                jenis = lines[i+1].trim();
+        let els = document.querySelectorAll('th, td');
+        for (let el of els) {
+            let txt = el.innerText.toLowerCase().trim();
+            if (txt === 'tanggal pembuatan' || txt.includes('tanggal pembuatan')) {
+                let next = el.nextElementSibling;
+                if (next && next.innerText) tgl = next.innerText.trim();
             }
-            if (line.includes('tanggal pembuatan') && i + 1 < lines.length) {
-                tgl = lines[i+1].trim();
-            }
-            if ((line.includes('hps paket') || line.includes('nilai hps')) && i + 1 < lines.length) {
-                hps = lines[i+1].trim();
+            if (txt.includes('hps paket') || txt.includes('nilai hps')) {
+                let next = el.nextElementSibling;
+                if (next && next.innerText) hps = next.innerText.trim();
             }
         }
-        return {tgl: tgl, hps: hps, jenis: jenis};
+        return {tgl: tgl, hps: hps};
     }
     """
 
@@ -415,9 +414,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
             if res_pengumuman.get('hps'):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
-
-            if res_pengumuman.get('jenis'):
-                exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
         except Exception: pass
 
         endpoints = [
@@ -447,7 +443,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         dp.close()
     except Exception: pass
 
-    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan, exact_jenis_pengadaan
+    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan
 
 
 def save_and_update_excel(df_new, file_output):
@@ -462,7 +458,7 @@ def save_and_update_excel(df_new, file_output):
             df_existing["Sumber LPSE"] = df_existing["Sumber LPSE"].astype(str).str.strip()
             
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "Nama Paket"], keep="last")
+            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
         except Exception: 
             df_final = df_new
     else:
@@ -479,7 +475,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (DENGAN "SABAR MENUNGGU" KATEGORI)
+# 4. SCRAPER ENGINE (MEMBACA DYNAMIC KATEGORI & PAGINASI)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -500,12 +496,65 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         )
         page = context.new_page()
 
-        # MAPPING KATEGORI RESMI YANG DIKEHENDAKI
-        KAT_MAP = {
-            "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
-            "4": "Jasa Konsultansi Badan Usaha Konstruksi",
-            "8": "Pekerjaan Konstruksi Terintegrasi"
+        js_auto_fetcher = """
+        async (args) => {
+            const { baseDomain, tahun, maxPages } = args;
+            let allRows = [];
+            
+            let targetCats = [];
+            const selects = document.querySelectorAll('select');
+            for (let sel of selects) {
+                for (let opt of sel.options) {
+                    let txt = opt.innerText.trim().toLowerCase();
+                    if ((txt.includes('konsultansi') && txt.includes('badan usaha')) || txt.includes('terintegrasi')) {
+                        if (opt.value && opt.value !== "") {
+                            targetCats.push({ id: opt.value, label: opt.innerText.trim() });
+                        }
+                    }
+                }
+            }
+            
+            if (targetCats.length === 0) {
+                targetCats = [
+                    { id: "3", label: "Jasa Konsultansi Badan Usaha Non Konstruksi" },
+                    { id: "4", label: "Jasa Konsultansi Badan Usaha Konstruksi" },
+                    { id: "8", label: "Pekerjaan Konstruksi Terintegrasi" }
+                ];
+            }
+            
+            for (const catObj of targetCats) {
+                let start = 0; 
+                const length = 100;
+                let total = 1;
+                let pagesFetched = 0;
+                
+                while (start < total && pagesFetched < maxPages) {
+                    let url = `${baseDomain}/dt/lelang?draw=1&start=${start}&length=${length}&tahun=${tahun}`;
+                    if (catObj.id !== "") {
+                        url += `&kategoriId=${catObj.id}`;
+                    }
+                    try {
+                        const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                        if (!resp.ok) break;
+                        const json = await resp.json();
+                        if (json && json.data && Array.isArray(json.data)) {
+                            const rowsWithCat = json.data.map(r => { 
+                                return { rowData: r, categoryId: catObj.id, categoryLabel: catObj.label }; 
+                            });
+                            allRows = allRows.concat(rowsWithCat);
+                            total = json.recordsFiltered || json.recordsTotal || json.data.length;
+                            if (json.data.length === 0) break;
+                        } else { break; }
+                    } catch(e) { break; }
+                    start += length;
+                    pagesFetched++;
+                    const jedaAcak = Math.floor(Math.random() * (2000 - 1000 + 1)) + 1000;
+                    await new Promise(r => setTimeout(r, jedaAcak));
+                }
+            }
+            return allRows;
         }
+        """
 
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama = lpse["nama"]
@@ -513,102 +562,87 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membuka Portal & Menunggu Data: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membedah Kategori & Menarik Data: **{lpse_nama}**...")
 
-            try: 
-                page.goto(lpse_url, wait_until="domcontentloaded", timeout=30000)
+            try: page.goto(lpse_url, wait_until="domcontentloaded", timeout=30000)
             except Exception:
                 log_container.warning(f"⚠️ Server Tidak Merespon ({lpse_nama})")
                 continue
 
             for tahun in target_years:
-                for kat_id, kat_label in KAT_MAP.items():
-                    try:
-                        url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
-                        page.goto(url_query, wait_until="domcontentloaded", timeout=25000)
+                try: raw_dt_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun, "maxPages": max_pages})
+                except Exception: raw_dt_data = []
+
+                if raw_dt_data:
+                    for item in raw_dt_data:
+                        cat_label = item.get("categoryLabel", "")
+                        row = item.get("rowData", [])
                         
-                        # KUNCI UTAMA AGAR TIDAK KOSONG: Tunggu spinner "Processing..." SPSE hilang!
-                        try:
-                            page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=15000)
-                        except Exception:
-                            pass 
+                        if isinstance(row, list) and len(row) >= 4:
+                            kode_id = str(row[0]).strip()
+                            if not kode_id.isdigit() or len(kode_id) < 7: continue
+                            if kode_id in candidates_dict: continue
 
-                        rows_data = page.evaluate("""
-                            () => {
-                                let results = [];
-                                let trs = document.querySelectorAll('table tbody tr');
-                                for (let tr of trs) {
-                                    let tds = tr.querySelectorAll('td');
-                                    if (tds.length >= 4) {
-                                        // Abaikan baris "Tidak ada data"
-                                        if (tds.length === 1 && tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
-                                        
-                                        results.push({
-                                            kode: tds[0].innerText.trim(),
-                                            nama: tds[1].innerHTML.trim(),
-                                            instansi: tds[2].innerText.trim(),
-                                            tahapan: tds[3].innerText.trim(),
-                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
-                                        });
-                                    }
+                            cell_nama_raw = str(row[1]).strip()
+                            instansi = str(row[2]).strip()
+                            tahapan_raw = str(row[3]).strip()
+                            hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
+
+                            clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+                            tahapan_clean = normalize_tahapan(tahapan_raw)
+
+                            # PENGUNCIAN 3 KATEGORI MUTLAK DARI JSON KATEGORI LABEL
+                            cat_lower = str(cat_label).lower()
+                            jenis_matched = None
+                            
+                            if "terintegrasi" in cat_lower:
+                                jenis_matched = "Pekerjaan Konstruksi Terintegrasi"
+                            elif "non" in cat_lower and "konsultansi" in cat_lower:
+                                jenis_matched = "Jasa Konsultansi Badan Usaha Non Konstruksi"
+                            elif "konsultansi" in cat_lower and "konstruksi" in cat_lower and "non" not in cat_lower:
+                                jenis_matched = "Jasa Konsultansi Badan Usaha Konstruksi"
+
+                            # Jika bukan 3 kategori di atas, ABAIKAN dan tendang langsung
+                            if not jenis_matched:
+                                continue
+
+                            hps_val = parse_rupiah_pintar(hps_raw, "HPS")
+                            if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
+
+                            if hps_val >= BATAS_MINIMAL_HPS:
+                                match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
+                                if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
+                                else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
+
+                                nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
+                                link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
+
+                                candidates_dict[kode_id] = {
+                                    "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
+                                    "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
+                                    "HPS": float(hps_val), "Metode": "Seleksi / Tender",
+                                    "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
+                                    "Jenis Pengadaan": jenis_matched, # TELAH DIKUNCI MATI
+                                    "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
+                                    "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
+                                    "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 }
-                                return results;
-                            }
-                        """)
-
-                        if rows_data:
-                            for row in rows_data:
-                                kode_id = row.get("kode", "")
-                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
-                                if kode_id in candidates_dict: continue
-
-                                cell_nama_raw = row.get("nama", "")
-                                instansi = row.get("instansi", "")
-                                tahapan_raw = row.get("tahapan", "")
-                                hps_raw = row.get("hps", "")
-
-                                clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
-                                tahapan_clean = normalize_tahapan(tahapan_raw)
-
-                                hps_val = parse_rupiah_pintar(hps_raw, "HPS")
-                                if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
-
-                                if hps_val >= BATAS_MINIMAL_HPS:
-                                    match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
-                                    if match_link: nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip()
-                                    else: nama_paket = clean_text.split("spse")[0].split("TA 20")[0].strip()
-
-                                    nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
-                                    link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
-
-                                    candidates_dict[kode_id] = {
-                                        "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
-                                        "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
-                                        "HPS": float(hps_val), "Metode": "Seleksi / Tender",
-                                        "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                        "Jenis Pengadaan": kat_label, "Tahun Anggaran": tahun, 
-                                        "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
-                                        "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    }
-                    except Exception: pass
 
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
-                log_container.info(f"🔍 Memeriksa Detail {len(candidates_lpse)} Kandidat Paket (≥ 2.5M) dari ({lpse_nama})...")
+                log_container.info(f"🔍 Mengambil Detail Presisi untuk {len(candidates_lpse)} paket sah dari ({lpse_nama})...")
                 
                 valid_candidates = []
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    (exact_hps, pemenang, nilai_kontrak_detail, tgl_pembuatan, exact_jenis_pengadaan) = fetch_detail_paket(
+                    # fetch_detail_paket TIDAK AKAN menyentuh 'Jenis Pengadaan' lagi!
+                    (exact_hps, pemenang, nilai_kontrak_detail, tgl_pembuatan) = fetch_detail_paket(
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    if exact_jenis_pengadaan:
-                        cand["Jenis Pengadaan"] = exact_jenis_pengadaan
-
-                    # VERIFIKASI MUTLAK 3 KATEGORI
+                    # FILTER FINAL BERLAPIS
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -623,7 +657,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 if valid_candidates:
                     df_lpse = pd.DataFrame(valid_candidates, columns=KOLOM_TARGET)
                     save_and_update_excel(df_lpse, FILE_EXCEL_OUTPUT)
-                    log_container.success(f"🎉 [{lpse_nama}] Berhasil Menyimpan {len(valid_candidates)} Paket Valid!")
+                    log_container.success(f"🎉 [{lpse_nama}] Sukses Menemukan {len(valid_candidates)} Paket Valid 3 Kategori!")
 
         browser.close()
 
