@@ -289,14 +289,26 @@ def extract_nilai_kontrak_from_text(text):
 def clean_df_master(df):
     """
     FILTRASI MUTLAK: HANYA MELOLOSKAN 3 KATEGORI RESMI.
+    MAMPU MEMBUANG 'JASA LAINNYA' DAN 'PEKERJAAN KONSTRUKSI' MURNI.
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
-    df["Jenis Pengadaan"] = df["Jenis Pengadaan"].astype(str).str.strip()
+    
+    def is_strictly_valid(row):
+        jp = str(row.get("Jenis Pengadaan", "")).strip()
+        if jp in ALL_3_CATEGORIES:
+            return True
+        jp_lower = jp.lower()
+        if "lainnya" in jp_lower or "barang" in jp_lower or jp_lower == "pekerjaan konstruksi":
+            return False
+        if ("konsultansi" in jp_lower or "terintegrasi" in jp_lower) and ("konstruksi" in jp_lower or "badan usaha" in jp_lower):
+            return True
+        return False
 
-    return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
+    mask = df.apply(is_strictly_valid, axis=1)
+    return df[mask].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
     t_clean = re.sub(r"<[^>]+>", " ", str(tahapan_raw)).strip()
@@ -355,24 +367,31 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     pemenang = "Belum Ditetapkan"
     nilai_kontrak = 0.0
     tgl_pembuatan = "-"
+    real_jenis_pengadaan = ""
 
+    # EKSTRAKSI DETEKSI PRESISI JENIS PENGADAAN DARI TABEL SPSE
     js_pengumuman_extractor = """
     () => {
         let hps = "";
         let tgl = "-";
-        let els = document.querySelectorAll('th, td');
-        for (let el of els) {
-            let txt = el.innerText.toLowerCase().trim();
-            if (txt === 'tanggal pembuatan' || txt.includes('tanggal pembuatan')) {
-                let next = el.nextElementSibling;
-                if (next && next.innerText) tgl = next.innerText.trim();
-            }
-            if (txt.includes('hps paket') || txt.includes('nilai hps')) {
-                let next = el.nextElementSibling;
-                if (next && next.innerText) hps = next.innerText.trim();
+        let jenis = "";
+        
+        let trs = document.querySelectorAll('table tr');
+        for (let tr of trs) {
+            let cells = tr.querySelectorAll('th, td');
+            if (cells.length >= 2) {
+                let label = cells[0].innerText.toLowerCase().trim();
+                let val = cells[1].innerText.trim();
+                if (label.includes('jenis pengadaan')) {
+                    jenis = val;
+                } else if (label.includes('tanggal pembuatan')) {
+                    tgl = val;
+                } else if (label.includes('hps paket') || label.includes('nilai hps')) {
+                    hps = val;
+                }
             }
         }
-        return {tgl: tgl, hps: hps};
+        return {tgl: tgl, hps: hps, jenis: jenis};
     }
     """
 
@@ -381,7 +400,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         let p_name = "Belum Ditetapkan";
         let p_kontrak = "";
         
-        // 1. Cek dari Detail Key-Value
         let ths = document.querySelectorAll('th, td');
         for(let th of ths){
             let txt = th.innerText.toLowerCase().trim();
@@ -395,7 +413,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
             }
         }
         
-        // 2. Cek dari Tabel Peserta jika format web berbeda (Cari icon Bintang)
         if (p_name === "Belum Ditetapkan" || p_name === "") {
             let trs = document.querySelectorAll('table tbody tr');
             for(let tr of trs) {
@@ -403,7 +420,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
                     let tds = tr.querySelectorAll('td');
                     if(tds.length >= 2) {
                         p_name = tds[1].innerText.split('\\n')[0].trim();
-                        // Harga biasanya ada di kolom paling ujung
                         p_kontrak = tds[tds.length-1].innerText.trim();
                     }
                 }
@@ -420,6 +436,9 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
             dp.goto(url_p, referer=base_referer, wait_until="domcontentloaded", timeout=20000)
             res_pengumuman = dp.evaluate(js_pengumuman_extractor)
             
+            if res_pengumuman.get('jenis'):
+                real_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
+
             if res_pengumuman.get('tgl') and res_pengumuman['tgl'] != "-":
                 m = re.search(r"([\d]{1,2}\s+[A-Za-z]+\s+[\d]{4})", res_pengumuman['tgl'])
                 if m: tgl_pembuatan = m.group(1).strip()
@@ -456,7 +475,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         dp.close()
     except Exception: pass
 
-    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan
+    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan, real_jenis_pengadaan
 
 
 def save_and_update_excel(df_new, file_output):
@@ -477,6 +496,7 @@ def save_and_update_excel(df_new, file_output):
     else:
         df_final = df_new if not df_new.empty else pd.DataFrame(columns=KOLOM_TARGET)
 
+    # PEMBERSAPAN OTOMATIS: DARI SISA-SISA JASA LAINNYA
     df_final = clean_df_master(df_final)
 
     with pd.ExcelWriter(file_output, engine="openpyxl") as writer:
@@ -488,7 +508,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MENCEGAT JSON DARI API SERVER INAPROC)
+# 4. SCRAPER ENGINE (MEMERIKSA DAN MENOLAK JASA LAINNYA secara REAL-TIME)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -531,9 +551,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
                     rows_data = []
                     
-                    # -------------------------------------------------------------
-                    # TRIK ANTI-NGEBUT: Cegat Data Mentah Langsung dari Server API
-                    # -------------------------------------------------------------
                     try:
                         with page.expect_response(lambda r: "dt/lelang" in r.url.lower() and r.request.resource_type in ["xhr", "fetch"], timeout=20000) as response_info:
                             page.goto(url_query, wait_until="domcontentloaded")
@@ -542,7 +559,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         json_data = resp.json()
                         rows_data = json_data.get("data", [])
                     except Exception:
-                        pass # Lewati jika server down atau memang tidak ada proyek sama sekali
+                        pass
                         
                     if rows_data:
                         for row in rows_data:
@@ -575,7 +592,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                         "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
                                         "HPS": float(hps_val), "Metode": "Seleksi / Tender",
                                         "Jenis Pemilihan": "Prakualifikasi / Pascakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                        "Jenis Pengadaan": kat_label, # MENGGUNAKAN LABEL KATEGORI RESMI
+                                        "Jenis Pengadaan": kat_label,
                                         "Tahun Anggaran": tahun, "Pemenang Kontrak": "Belum Ditetapkan",
                                         "Nilai Kontrak": float(nilai_kontrak_tabel), "Link": link_evaluasi,
                                         "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -586,19 +603,29 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
-                log_container.info(f"🔍 Memeriksa Detail {len(candidates_lpse)} Kandidat Paket (≥ 2.5M) dari ({lpse_nama})...")
+                log_container.info(f"🔍 Memeriksa Detail & Jenis Pengadaan untuk {len(candidates_lpse)} paket dari ({lpse_nama})...")
                 
                 valid_candidates = []
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    (exact_hps, pemenang, nilai_kontrak_detail, tgl_pembuatan) = fetch_detail_paket(
+                    (exact_hps, pemenang, nilai_kontrak_detail, tgl_pembuatan, real_jenis) = fetch_detail_paket(
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    # VERIFIKASI MUTLAK: 100% Mengunci 3 Kategori
-                    if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
+                    # APABILA TERTANGKAP BAHWA JENIS PENGADAAN ASLINYA ADALAH JASA LAINNYA/BARANG/KONSTRUKSI MURNI -> BUANG LANGSUNG!
+                    if real_jenis:
+                        cand["Jenis Pengadaan"] = real_jenis
+
+                    jp_check = cand["Jenis Pengadaan"].strip()
+                    jp_lower = jp_check.lower()
+
+                    if "lainnya" in jp_lower or "barang" in jp_lower or jp_lower == "pekerjaan konstruksi":
                         continue
+
+                    if jp_check not in ALL_3_CATEGORIES:
+                        if not ("konsultansi" in jp_lower or "terintegrasi" in jp_lower):
+                            continue
 
                     cand["Tanggal Pembuatan"] = tgl_pembuatan if tgl_pembuatan != "-" else "-"
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
@@ -616,7 +643,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
 
         browser.close()
 
-    # PENGAMAN TERAKHIR: Paksa Buat File Kalau Masih Belum Ada
     if all_scraped_data:
         df_all = pd.DataFrame(all_scraped_data, columns=KOLOM_TARGET)
         save_and_update_excel(df_all, FILE_EXCEL_OUTPUT)
