@@ -32,7 +32,7 @@ if __name__ == "__main__":
 
     # 2. JALANKAN PENARIKAN LENGKAP 104 LPSE
     log = DummyLog()
-    target_years = [2026, 2025]
+    target_years = [2026, 2025, 2024, 2023, 2022]
     max_pages = 10
     
     run_scraper(DAFTAR_LPSE, target_years, max_pages, log)
