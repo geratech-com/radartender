@@ -250,7 +250,7 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER PINTAR (FILTRASI MURNI STRUKTUR KOLOM)
+# 3. HELPER PARSING & CLEANER PINTAR
 # ==============================================================================
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -378,7 +378,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     tgl_pembuatan = "-"
     exact_jenis_pengadaan = ""
 
-    # EXTRACTOR PELURU PERAK: MENGAMBIL SEL PERSIS DI SEBELAHNYA (nextElementSibling)
     js_pengumuman_extractor = """
     () => {
         let hps = "";
@@ -464,7 +463,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
                 val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
                 if val > 0: exact_hps = val
 
-            # Teks Jenis Pengadaan Asli dari Halaman SPSE
             if res_pengumuman.get('jenis'):
                 exact_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
 
@@ -502,8 +500,10 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
 
 
 def save_and_update_excel(df_new, file_output):
-    if df_new.empty and not os.path.exists(file_output): return
-    
+    """
+    SISTEM SIMPAN OTOMATIS:
+    Memastikan file Excel SELALU LANGSUNG DIBUAT sejak awal penarikan.
+    """
     if not df_new.empty:
         df_new["ID LPSE"] = df_new["ID LPSE"].astype(str).str.strip()
         df_new["Sumber LPSE"] = df_new["Sumber LPSE"].astype(str).str.strip()
@@ -517,10 +517,12 @@ def save_and_update_excel(df_new, file_output):
             
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
             df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
-        except Exception: df_final = df_new
-    else: df_final = df_new
+        except Exception: 
+            df_final = df_new
+    else:
+        df_final = df_new if not df_new.empty else pd.DataFrame(columns=KOLOM_TARGET)
 
-    # Filter mutlak sebelum simpan
+    # Clean mutlak sebelum simpan ke disk
     df_final = clean_df_master(df_final)
 
     with pd.ExcelWriter(file_output, engine="openpyxl") as writer:
@@ -679,7 +681,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                     "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 }
 
-            # TAHAP 2: BUKA HALAMAN DETAIL PENGUMUMAN & CEK MUTLAK STRING 'JENIS PENGADAAN'
+            # TAHAP 2: VERIFIKASI MUTLAK 'JENIS PENGADAAN' PADA HALAMAN SPSE
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
@@ -696,7 +698,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     if exact_jenis_pengadaan:
                         cand["Jenis Pengadaan"] = exact_jenis_pengadaan
 
-                    # 🚨 FILTER MUTLAK 100%: HANYA LOLOSKAN JIKA SAMA PERSIS DENGAN 3 KATEGORI
+                    # FILTER MUTLAK 100%
                     if cand["Jenis Pengadaan"] not in ALL_3_CATEGORIES:
                         continue
 
@@ -715,6 +717,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
 
         browser.close()
 
+    # PASTIKAN FILE EXCEL SELALU DIBUAT WALAUPUN SEMENTARA DATANYA MASIH PROSES
     if not os.path.exists(FILE_EXCEL_OUTPUT):
         df_empty = pd.DataFrame(columns=KOLOM_TARGET)
         save_and_update_excel(df_empty, FILE_EXCEL_OUTPUT)
@@ -772,7 +775,6 @@ if not df_master.empty:
     df_master["Sumber LPSE"] = df_master["Sumber LPSE"].astype(str).str.strip()
     df_master = df_master.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
 
-    # CLEANING FINAL PADA DASHBOARD: MEMBUANG APAPUN YANG BUKAN 3 KATEGORI
     df_master = clean_df_master(df_master)
 
     if "Tanggal Pembuatan" not in df_master.columns: df_master["Tanggal Pembuatan"] = "-"
