@@ -380,20 +380,38 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     () => {
         let p_name = "Belum Ditetapkan";
         let p_kontrak = "";
-        let ths = document.querySelectorAll('th');
+        
+        // 1. Cek dari Detail Key-Value
+        let ths = document.querySelectorAll('th, td');
         for(let th of ths){
-            let txt = th.innerText.toLowerCase();
-            if(txt.includes('nama pemenang') || txt.includes('pemenang berkontrak')){
+            let txt = th.innerText.toLowerCase().trim();
+            if(txt === 'nama penyedia' || txt === 'nama pemenang' || txt.includes('pemenang berkontrak')){
                 let td = th.nextElementSibling;
                 if(td && td.tagName.toLowerCase() === 'td') p_name = td.innerText.split('\\n')[0].trim();
             }
-            if(txt.includes('harga kontrak') || txt.includes('nilai kontrak') || txt.includes('hasil negosiasi')){
+            if(txt === 'harga kontrak' || txt === 'nilai kontrak' || txt === 'hasil negosiasi' || txt === 'harga penawaran'){
                 let td = th.nextElementSibling;
                 if(td && td.tagName.toLowerCase() === 'td') p_kontrak = td.innerText.trim();
             }
         }
+        
+        // 2. Cek dari Tabel Peserta jika format web berbeda (Cari icon Bintang)
+        if (p_name === "Belum Ditetapkan" || p_name === "") {
+            let trs = document.querySelectorAll('table tbody tr');
+            for(let tr of trs) {
+                if(tr.innerHTML.includes('fa-star') || tr.innerHTML.includes('Pemenang') || tr.innerHTML.includes('icon-star')) {
+                    let tds = tr.querySelectorAll('td');
+                    if(tds.length >= 2) {
+                        p_name = tds[1].innerText.split('\\n')[0].trim();
+                        // Harga biasanya ada di kolom paling ujung
+                        p_kontrak = tds[tds.length-1].innerText.trim();
+                    }
+                }
+            }
+        }
         return {pemenang: p_name, kontrak: p_kontrak};
     }
+    """
     """
 
     try:
