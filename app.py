@@ -412,7 +412,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         return {pemenang: p_name, kontrak: p_kontrak};
     }
     """
-    """
 
     try:
         dp = context.new_page()
