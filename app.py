@@ -483,7 +483,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE
+# 4. SCRAPER ENGINE (DENGAN WAIT FOR SELECTOR AGAR TIDAK KOSONG)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -524,6 +524,12 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     try:
                         url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
                         page.goto(url_query, wait_until="domcontentloaded", timeout=20000)
+                        
+                        # TUNGGU TABEL MUNCUL AGAR TIDAK KOSONG SAAT DI-RELOAD
+                        try:
+                            page.wait_for_selector('table tbody tr', timeout=15000)
+                        except Exception:
+                            pass # Lanjut saja jika tabel memang tidak ada (kosong dari sananya)
                         
                         rows_data = page.evaluate("""
                             () => {
