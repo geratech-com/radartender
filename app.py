@@ -174,33 +174,22 @@ def normalize_jenis_pengadaan(raw_cat, nama_paket=""):
     c = str(raw_cat).lower().strip()
     np = str(nama_paket).lower().strip()
     
-    if "lainnya" in c or "barang" in c or c == "pekerjaan konstruksi":
-        return "INVALID"
-        
+    if "lainnya" in c or "barang" in c or c == "pekerjaan konstruksi": return "INVALID"
     if any(k in np for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
         if "konsultan" in np or "konsultansi" in c: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
         return "INVALID"
-        
-    if "terintegrasi" in c or "terintegrasi" in np or "design & build" in np:
-        return "Pekerjaan Konstruksi Terintegrasi"
-        
-    if "konsult" in c and "konstruksi" in c and "non" not in c:
-        return "Jasa Konsultansi Badan Usaha Konstruksi"
-        
-    if "non" in c and "konsult" in c:
-        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-        
+    if "terintegrasi" in c or "terintegrasi" in np or "design & build" in np: return "Pekerjaan Konstruksi Terintegrasi"
+    if "konsult" in c and "konstruksi" in c and "non" not in c: return "Jasa Konsultansi Badan Usaha Konstruksi"
+    if "non" in c and "konsult" in c: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
     if "konsult" in c:
         if any(k in np for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi"]):
             return "Jasa Konsultansi Badan Usaha Konstruksi"
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-        
     return "INVALID"
 
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
     text_str = str(text).strip()
-    
     if target_keyword:
         pattern = re.compile(rf"{target_keyword}\s*(?::|Rp\.?)?\s*([\d\.,]+(?:\s*(?:Miliar|Juta|Triliun|M|Jt|Rb|Ribu|T)\b)?)", re.IGNORECASE)
         match = pattern.search(text_str)
@@ -228,8 +217,12 @@ def parse_rupiah_pintar(text, target_keyword=None):
             val = float(clean)
             if val >= 1_000_000: valid_vals.append(val)
         except ValueError: pass
-    
     if valid_vals: return min(valid_vals)
+    return 0.0
+
+def extract_nilai_kontrak_from_text(text):
+    match = re.search(r"Nilai\s+Kontrak\s*:\s*([^\n]+)", text, re.IGNORECASE)
+    if match: return parse_rupiah_pintar(match.group(1))
     return 0.0
 
 def clean_df_master(df):
@@ -296,27 +289,22 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
 
     try:
         dp = context.new_page()
-        # LANGSUNG tembak ke Pemenang untuk hemat waktu!
-        endpoints = [
-            f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak",
-            f"{base_domain}/evaluasi/{kode_id}/pemenang",
-        ]
+        endpoints = [f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak", f"{base_domain}/evaluasi/{kode_id}/pemenang"]
         for url in endpoints:
             try:
-                time.sleep(1) # Jeda sopan agar tidak 429
+                time.sleep(1)
                 dp.goto(url, referer=base_referer, wait_until="domcontentloaded", timeout=15000)
                 body_text = dp.inner_text("body")
                 
                 if "Terlalu Banyak Permintaan" in body_text:
-                    time.sleep(20)
+                    time.sleep(15)
                     dp.goto(url, referer=base_referer, wait_until="domcontentloaded", timeout=15000)
                     body_text = dp.inner_text("body")
                     
                 if "Akses Ditolak" in body_text or "OPPS!" in body_text: continue
 
                 res_js = dp.evaluate(js_pemenang_extractor)
-                if res_js['pemenang'] and res_js['pemenang'] != "Belum Ditetapkan":
-                    pemenang = res_js['pemenang']
+                if res_js['pemenang'] and res_js['pemenang'] != "Belum Ditetapkan": pemenang = res_js['pemenang']
                 if res_js['kontrak']:
                     val_k = parse_rupiah_pintar(str(res_js['kontrak']))
                     if val_k >= 1_000_000: nilai_kontrak = val_k
@@ -354,7 +342,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = "#,##0.00"
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MEMBACA LANGSUNG DARI LAYAR BROWSER)
+# 4. SCRAPER ENGINE (MAPPING ID KATEGORI DINAMIS)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32": asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -366,41 +354,73 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
     all_scraped_data = []
 
     with sync_playwright() as p:
-        # BROWSER ASLI: Terlihat oleh layar (Bypass Cloudflare Block)
         browser = p.chromium.launch(headless=False, args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        KAT_MAP = {
-            "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
-            "4": "Jasa Konsultansi Badan Usaha Konstruksi",
-            "8": "Pekerjaan Konstruksi Terintegrasi"
+        # FUNGSI PENDETEKSI ID KATEGORI OTOMATIS
+        js_get_dynamic_categories = """
+        () => {
+            let map = {};
+            let selects = document.querySelectorAll('select');
+            for (let sel of selects) {
+                if (sel.innerHTML.toLowerCase().includes('konsultan') || sel.innerHTML.toLowerCase().includes('terintegrasi')) {
+                    for (let opt of sel.options) {
+                        let txt = opt.innerText.toLowerCase().trim();
+                        let val = opt.value;
+                        if (!val) continue;
+                        
+                        if (txt.includes('konsultansi') && txt.includes('konstruksi') && !txt.includes('non')) {
+                            map['Jasa Konsultansi Badan Usaha Konstruksi'] = val;
+                        } else if (txt.includes('konsultansi') && txt.includes('non')) {
+                            map['Jasa Konsultansi Badan Usaha Non Konstruksi'] = val;
+                        } else if (txt.includes('terintegrasi')) {
+                            map['Pekerjaan Konstruksi Terintegrasi'] = val;
+                        }
+                    }
+                }
+            }
+            return map;
         }
+        """
 
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama, lpse_url = lpse["nama"], lpse["url"]
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membaca Layar SPSE secara 'Sopan': **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membaca Layar & Kategori Dinamis SPSE: **{lpse_nama}**...")
             page = context.new_page()
 
+            # 1. BUKA HALAMAN AWAL UNTUK MENGAMBIL ID KATEGORI YANG BENAR
+            dynamic_kat_map = {}
+            try: 
+                page.goto(lpse_url, wait_until="domcontentloaded", timeout=25000)
+                dynamic_kat_map = page.evaluate(js_get_dynamic_categories)
+            except Exception: pass
+            
+            # Jika gagal mengambil dinamis, gunakan fallback default
+            if not dynamic_kat_map:
+                dynamic_kat_map = {
+                    "Jasa Konsultansi Badan Usaha Non Konstruksi": "3",
+                    "Jasa Konsultansi Badan Usaha Konstruksi": "4",
+                    "Pekerjaan Konstruksi Terintegrasi": "8"
+                }
+
             for tahun in target_years:
-                for kat_id, kat_label in KAT_MAP.items():
+                # LOOP MENGGUNAKAN ID KATEGORI YANG SUDAH DITEMUKAN DARI WEB
+                for kat_label, kat_id in dynamic_kat_map.items():
                     url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
                     
-                    # LOGIKA JEDA ANTI-429
                     while True:
                         try:
                             time.sleep(1.5)
                             page.goto(url_query, wait_until="domcontentloaded", timeout=30000)
-                            body_text = page.inner_text("body")
-                            if "Terlalu Banyak Permintaan" in body_text or "Rate Limit" in body_text:
+                            if "Terlalu Banyak Permintaan" in page.inner_text("body"):
                                 log_container.warning(f"⚠️ Terkena Limit (429) di {lpse_nama}. Istirahat 20 detik...")
                                 time.sleep(20)
                                 continue 
                             break 
-                        except Exception:
-                            break
+                        except Exception: break
                             
                     try: page.wait_for_selector('table tbody tr', timeout=10000)
                     except: continue
@@ -410,7 +430,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         time.sleep(2)
                     except: pass
                         
-                    # LOGIKA KLIK HALAMAN NEXT
                     while True:
                         try: page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=10000)
                         except: pass
@@ -447,14 +466,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                                 tahapan_raw = row.get("tahapan", "")
                                 hps_raw = row.get("hps", "")
                                 
-                                tabel_cat = ""
-                                match_cat = re.search(r'(?:<br\s*/?>|<\/a>)\s*([A-Za-z\s&]+?)\s*-\s*TA', cell_nama_raw, re.IGNORECASE)
-                                if match_cat: tabel_cat = match_cat.group(1).strip()
-                                
                                 match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
                                 nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip() if match_link else re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
 
-                                final_cat = normalize_jenis_pengadaan(tabel_cat, nama_paket)
+                                # Gunakan label kategori dari map (Anti Salah Kamar)
+                                final_cat = normalize_jenis_pengadaan(kat_label, nama_paket)
                                 if final_cat == "INVALID": continue
                                     
                                 hps_val = parse_rupiah_pintar(hps_raw, "HPS")
@@ -478,21 +494,15 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         
                         next_btn = page.locator('.paginate_button.next')
                         if next_btn.count() > 0:
-                            class_attr = next_btn.first.get_attribute("class") or ""
-                            if "disabled" in class_attr:
-                                break
-                            else:
-                                try:
-                                    next_btn.first.click(timeout=5000)
-                                    time.sleep(random.uniform(1.0, 2.0))
-                                except:
-                                    break
-                        else:
-                            break
+                            if "disabled" in (next_btn.first.get_attribute("class") or ""): break
+                            try:
+                                next_btn.first.click(timeout=5000)
+                                time.sleep(random.uniform(1.0, 2.0))
+                            except: break
+                        else: break
 
             page.close()
 
-            # Buka detail hanya untuk yang lolos saringan (Cepat)
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
