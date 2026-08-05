@@ -171,9 +171,6 @@ INDONESIAN_MONTHS = {
 # 3. HELPER NORMALISASI & CLEANER KETAT
 # ==============================================================================
 def normalize_jenis_pengadaan(raw_cat, nama_paket=""):
-    """
-    Saringan Super Kilat: Membuang sampah dalam hitungan milidetik.
-    """
     c = str(raw_cat).lower().strip()
     np = str(nama_paket).lower().strip()
     
@@ -311,7 +308,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
                 body_text = dp.inner_text("body")
                 
                 if "Terlalu Banyak Permintaan" in body_text:
-                    time.sleep(15)
+                    time.sleep(20)
                     dp.goto(url, referer=base_referer, wait_until="domcontentloaded", timeout=15000)
                     body_text = dp.inner_text("body")
                     
@@ -357,7 +354,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = "#,##0.00"
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (10X LEBIH CEPAT, ANTI 429 TOO MANY REQUESTS)
+# 4. SCRAPER ENGINE (MEMBACA LANGSUNG DARI LAYAR BROWSER)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32": asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -369,107 +366,133 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
     all_scraped_data = []
 
     with sync_playwright() as p:
-        # Browser kembali ke Stealth Mode
-        browser = p.chromium.launch(headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"])
-        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        # BROWSER ASLI: Terlihat oleh layar (Bypass Cloudflare Block)
+        browser = p.chromium.launch(headless=False, args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-blink-features=AutomationControlled"])
+        context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        js_auto_fetcher = """
-        async (args) => {
-            const { baseDomain, tahun } = args;
-            let allRows = [];
-            let start = 0;
-            let length = 500;
-            let total = 1;
-            
-            while (start < total) {
-                let url = `${baseDomain}/dt/lelang?draw=1&start=${start}&length=${length}&tahun=${tahun}`;
-                try {
-                    const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-                    if (resp.status === 429) return "BLOCKED";
-                    if (resp.ok) {
-                        const json = await resp.json();
-                        if (json && json.data) {
-                            allRows = allRows.concat(json.data);
-                            total = json.recordsFiltered || json.recordsTotal || 0;
-                        } else break;
-                    } else break;
-                } catch(e) { break; }
-                start += length;
-                if (start < total) {
-                    await new Promise(r => setTimeout(r, 2000)); // Jeda internal JS
-                }
-            }
-            return allRows;
+        KAT_MAP = {
+            "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
+            "4": "Jasa Konsultansi Badan Usaha Konstruksi",
+            "8": "Pekerjaan Konstruksi Terintegrasi"
         }
-        """
 
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama, lpse_url = lpse["nama"], lpse["url"]
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Mengekstrak Data dari SPSE: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membaca Layar SPSE secara 'Sopan': **{lpse_nama}**...")
             page = context.new_page()
 
-            try: page.goto(lpse_url, wait_until="domcontentloaded", timeout=25000)
-            except Exception: pass
-
             for tahun in target_years:
-                time.sleep(2) # Jeda agar LKPP tidak marah
-                
-                rows_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun})
-                if rows_data == "BLOCKED":
-                    log_container.warning(f"⚠️ Limit LKPP Terdeteksi! Istirahat 15 detik...")
-                    time.sleep(15)
-                    rows_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun})
-                
-                if isinstance(rows_data, list) and rows_data:
-                    for row in rows_data:
-                        if isinstance(row, list) and len(row) >= 4:
-                            kode_id = str(row[0]).strip()
-                            if not kode_id.isdigit() or len(kode_id) < 7: continue
-
-                            cell_nama_raw = str(row[1]).strip()
+                for kat_id, kat_label in KAT_MAP.items():
+                    url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
+                    
+                    # LOGIKA JEDA ANTI-429
+                    while True:
+                        try:
+                            time.sleep(1.5)
+                            page.goto(url_query, wait_until="domcontentloaded", timeout=30000)
+                            body_text = page.inner_text("body")
+                            if "Terlalu Banyak Permintaan" in body_text or "Rate Limit" in body_text:
+                                log_container.warning(f"⚠️ Terkena Limit (429) di {lpse_nama}. Istirahat 20 detik...")
+                                time.sleep(20)
+                                continue 
+                            break 
+                        except Exception:
+                            break
                             
-                            # MAGIS 1: TARIK KATEGORI LANGSUNG DARI HTML TABEL (Tanpa klik detail)
-                            tabel_cat = ""
-                            match_cat = re.search(r'<br\s*/?>\s*([A-Za-z\s&]+?)\s*-\s*TA', cell_nama_raw, re.IGNORECASE)
-                            if match_cat: tabel_cat = match_cat.group(1).strip()
-                            
-                            match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
-                            nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip() if match_link else cell_nama_raw
-
-                            # MAGIS 2: FILTER SUPER KILAT (Buang 95% Sampah)
-                            final_cat = normalize_jenis_pengadaan(tabel_cat, nama_paket)
-                            if final_cat == "INVALID":
-                                continue # LANGSUNG BUANG!
-                                
-                            instansi = str(row[2]).strip()
-                            tahapan_raw = str(row[3]).strip()
-                            hps_raw = str(row[4]).strip() if len(row) > 4 else cell_nama_raw
-
-                            clean_text = re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
-                            tahapan_clean = normalize_tahapan(tahapan_raw)
-
-                            hps_val = parse_rupiah_pintar(hps_raw, "HPS")
-                            if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(clean_text, "HPS")
-
-                            if hps_val >= BATAS_MINIMAL_HPS:
-                                nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
-                                link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
-
-                                candidates_dict[kode_id] = {
-                                    "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
-                                    "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
-                                    "HPS": float(hps_val), "Metode": "Seleksi / Tender",
-                                    "Jenis Pemilihan": "Prakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                    "Jenis Pengadaan": final_cat, "Tahun Anggaran": tahun, 
-                                    "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
-                                    "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    try: page.wait_for_selector('table tbody tr', timeout=10000)
+                    except: continue
+                        
+                    try:
+                        page.select_option('select[name$="_length"]', '100', timeout=3000)
+                        time.sleep(2)
+                    except: pass
+                        
+                    # LOGIKA KLIK HALAMAN NEXT
+                    while True:
+                        try: page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=10000)
+                        except: pass
+                        
+                        rows = page.evaluate("""
+                            () => {
+                                let results = [];
+                                let trs = document.querySelectorAll('table tbody tr');
+                                for (let tr of trs) {
+                                    let tds = tr.querySelectorAll('td');
+                                    if (tds.length >= 4) {
+                                        if (tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
+                                        results.push({
+                                            kode: tds[0].innerText.trim(),
+                                            nama: tds[1].innerHTML.trim(),
+                                            instansi: tds[2].innerText.trim(),
+                                            tahapan: tds[3].innerText.trim(),
+                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
+                                        });
+                                    }
                                 }
+                                return results;
+                            }
+                        """)
+
+                        if rows:
+                            for row in rows:
+                                kode_id = row.get("kode", "")
+                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
+                                if kode_id in candidates_dict: continue
+
+                                cell_nama_raw = row.get("nama", "")
+                                instansi = row.get("instansi", "")
+                                tahapan_raw = row.get("tahapan", "")
+                                hps_raw = row.get("hps", "")
+                                
+                                tabel_cat = ""
+                                match_cat = re.search(r'(?:<br\s*/?>|<\/a>)\s*([A-Za-z\s&]+?)\s*-\s*TA', cell_nama_raw, re.IGNORECASE)
+                                if match_cat: tabel_cat = match_cat.group(1).strip()
+                                
+                                match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
+                                nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip() if match_link else re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+
+                                final_cat = normalize_jenis_pengadaan(tabel_cat, nama_paket)
+                                if final_cat == "INVALID": continue
+                                    
+                                hps_val = parse_rupiah_pintar(hps_raw, "HPS")
+                                if hps_val < BATAS_MINIMAL_HPS: 
+                                    hps_val = parse_rupiah_pintar(re.sub(r"<[^>]+>", " ", cell_nama_raw).strip(), "HPS")
+
+                                if hps_val >= BATAS_MINIMAL_HPS:
+                                    tahapan_clean = normalize_tahapan(tahapan_raw)
+                                    nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
+                                    link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
+
+                                    candidates_dict[kode_id] = {
+                                        "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
+                                        "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
+                                        "HPS": float(hps_val), "Metode": "Seleksi / Tender",
+                                        "Jenis Pemilihan": "Prakualifikasi", "Evaluasi": "Kualitas & Biaya",
+                                        "Jenis Pengadaan": final_cat, "Tahun Anggaran": tahun, 
+                                        "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
+                                        "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                    }
+                        
+                        next_btn = page.locator('.paginate_button.next')
+                        if next_btn.count() > 0:
+                            class_attr = next_btn.first.get_attribute("class") or ""
+                            if "disabled" in class_attr:
+                                break
+                            else:
+                                try:
+                                    next_btn.first.click(timeout=5000)
+                                    time.sleep(random.uniform(1.0, 2.0))
+                                except:
+                                    break
+                        else:
+                            break
 
             page.close()
 
+            # Buka detail hanya untuk yang lolos saringan (Cepat)
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
@@ -479,9 +502,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    _, pemenang, nilai_kontrak_detail, _ = fetch_detail_paket(
-                        context, base_domain, cand["ID LPSE"], lpse_url
-                    )
+                    _, pemenang, nilai_kontrak_detail, _ = fetch_detail_paket(context, base_domain, cand["ID LPSE"], lpse_url)
 
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
                     if nilai_kontrak_detail >= 1_000_000: cand["Nilai Kontrak"] = float(nilai_kontrak_detail)
