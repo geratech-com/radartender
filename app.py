@@ -174,9 +174,6 @@ DAFTAR_LPSE = [
     {"nama": "Prov Papua", "url": "https://spse.inaproc.id/papua/lelang"},
     {"nama": "Prov Papua Barat", "url": "https://spse.inaproc.id/papuabarat/lelang"},
     {"nama": "Prov Papua Selatan", "url": "https://spse.inaproc.id/papuaselatan/lelang"},
-    {"nama": "Prov Papua Tengah", "url": "https://spse.inaproc.id/papuatengah/lelang"},
-    {"nama": "Prov Papua Pegunungan", "url": "https://spse.inaproc.id/papuapegunungan/lelang"},
-    {"nama": "Prov Papua Barat Daya", "url": "https://spse.inaproc.id/papuabaratdaya/lelang"},
     {"nama": "Kota Surabaya", "url": "https://spse.inaproc.id/surabaya/lelang"},
     {"nama": "Kota Medan", "url": "https://spse.inaproc.id/medan/lelang"},
     {"nama": "Kota Makassar", "url": "https://spse.inaproc.id/makassar/lelang"},
@@ -240,23 +237,32 @@ def normalize_jenis_pengadaan(text, nama_paket=""):
     s = str(text).lower().strip()
     np_lower = str(nama_paket).lower().strip()
     
-    # 1. Menolak Kategori yang Jelas BUKAN Target (Jasa Lainnya, Barang, Konstruksi Fisik Murni)
+    # 1. Menolak Kategori BUKAN Target
     if "lainnya" in s or "barang" in s or s == "pekerjaan konstruksi":
         return "INVALID"
         
-    # 2. Deteksi Konstruksi Terintegrasi
-    if "terintegrasi" in s or "terintegrasi" in np_lower or "design & build" in np_lower or "rancang bangun" in np_lower:
+    # 2. Proteksi Khusus Proyek IT/Software -> Dialihkan ke Non-Konstruksi
+    if any(k in np_lower for k in ["software", "programmer", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi", "hardware", "laptop", "server"]):
+        if "konsultan" in s or "konsultan" in np_lower or "konsultansi" in s:
+            return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+        return "INVALID"
+
+    # 3. Deteksi Konstruksi Terintegrasi (Hanya Konstruksi/Rancang Bangun Fisik)
+    if "konstruksi terintegrasi" in s or "pekerjaan terintegrasi" in s or "design & build" in s or "rancang bangun" in s:
         return "Pekerjaan Konstruksi Terintegrasi"
-        
-    # 3. Deteksi Konsultansi Non-Konstruksi
+    if "terintegrasi" in s and ("konstruksi" in s or "pekerjaan" in s):
+        return "Pekerjaan Konstruksi Terintegrasi"
+    if "terintegrasi" in np_lower and any(k in np_lower for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "rancang", "design & build"]):
+        return "Pekerjaan Konstruksi Terintegrasi"
+
+    # 4. Deteksi Konsultansi Non-Konstruksi
     if "non" in s and ("konstruksi" in s or "konsult" in s):
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-        
-    # 4. Deteksi Konsultansi Konstruksi
-    if "konstruksi" in s and "konsult" in s:
+
+    # 5. Deteksi Konsultansi Konstruksi
+    if "konsult" in s and "konstruksi" in s:
         return "Jasa Konsultansi Badan Usaha Konstruksi"
-        
-    # 5. Analisis Kata Kunci pada Nama Paket
+    
     full_text = f"{s} {np_lower}"
     if any(k in full_text for k in ["konsult", "pengawasan", "perencanaan", "ded", "mk ", "manajemen konstruksi", "supervisi", "feasibility"]):
         if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom"]):
@@ -266,7 +272,7 @@ def normalize_jenis_pengadaan(text, nama_paket=""):
 
     if "konsult" in s:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-        
+
     return "INVALID"
 
 
@@ -325,14 +331,14 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    MEMINDAH KAN SELURUH DATA KE 3 KATEGORI RESMI & MENYARING DATA VALID
+    MEMINDAHKAN SELURUH DATA KE 3 KATEGORI RESMI & MENYARING DATA VALID
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
     
-    # Standarisasi kolom "Jenis Pengadaan"
+    # Standarisasi otomatis kolom "Jenis Pengadaan"
     df["Jenis Pengadaan"] = df.apply(
         lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Nama Paket", "")), axis=1
     )
