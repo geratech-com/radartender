@@ -14,12 +14,6 @@ from playwright.sync_api import sync_playwright
 import streamlit as st
 
 # ==============================================================================
-# 0. KONFIGURASI COOKIES SPSE (ANTI-BLOKIR CLOUDFLARE)
-# ==============================================================================
-# Tempelkan cookies terbaru dari browser Anda di sini jika suatu saat script kembali diblokir (0 data)
-RAW_COOKIES = "_ga=GA1.1.2050872497.1784866919; __cf_bm=udk55.Cl1ZBux6Wkc2WgzIuMVnfbvN1sD6vN.QzCuno-1785917508.9321837-1.0.1.1-phur3ptgBte6Dd70xIeiv2CJnTTyY2xq1gfjMU4Gd4HYrppP4zCx2yFWioj9o6sFgOvdxPIZg8iX4xe9BpHtRwkam0QrasUGL3Fn7HEy.CpuHlkPH1P2rftXScJ1AAX6; _cfuvid=J30XFmLxeZ7Facy6BoQQipax6nbJYpR4l03IsLCVvis-1785917508.9321837-1.0.1.1-YX33n90SpxTA6LNqtW.4H_aAAtHzQZmO0TEoY9mSCz0; SPSE_SESSION=d1583ce0ab28e9f5b9dd8b88b76092f03be06769-___AT=755544c0106bc4025f205d99ea42c956668fea6d&___TS=1785919941685&___ID=59cc739a-58fd-465a-9210-93c4a42371ee; _ga_KLDH3FQ7DR=GS2.1.s1785917509$o24$g1$t1785918141$j14$l0$h0"
-
-# ==============================================================================
 # FIX KHUSUS WINDOWS + STREAMLIT + PLAYWRIGHT SUBPROCESS
 # ==============================================================================
 if sys.platform == "win32":
@@ -247,11 +241,9 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
     np_lower = str(nama_paket).lower().strip()
     raw_lower = str(raw_cat).lower().strip()
     
-    # 1. Menolak Kategori yang Jelas BUKAN Target
     if rj_lower in ["jasa lainnya", "pengadaan barang", "pekerjaan konstruksi"] or "lainnya" in rj_lower or "barang" in rj_lower:
         return "INVALID"
 
-    # 2. Proteksi Khusus Pekerjaan Konstruksi Terintegrasi
     if "terintegrasi" in raw_lower or "terintegrasi" in rj_lower:
         if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
             if "konsultan" in np_lower or "konsultansi" in rj_lower:
@@ -259,20 +251,17 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
             return "INVALID"
         return "Pekerjaan Konstruksi Terintegrasi"
 
-    # 3. Kunci Kategori 4: Jasa Konsultansi Badan Usaha Konstruksi
     if "konstruksi" in raw_lower and "non" not in raw_lower and "konsult" in raw_lower:
         return "Jasa Konsultansi Badan Usaha Konstruksi"
     if "konstruksi" in rj_lower and "non" not in rj_lower and "konsult" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Konstruksi"
 
-    # 4. Kunci Kategori 3: Jasa Konsultansi Badan Usaha Non Konstruksi
     if "non" in raw_lower or "non" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
-    # 5. Analisis Kata Kunci pada Paket
     full_text = f"{raw_lower} {rj_lower} {np_lower}"
     if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom", "ded", "supervisi", "manajemen konstruksi"]):
-        if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi"]):
+        if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah"]):
             return "Jasa Konsultansi Badan Usaha Konstruksi"
 
     if "konsult" in raw_lower or "konsult" in rj_lower:
@@ -290,7 +279,7 @@ def parse_rupiah_pintar(text, target_keyword=None):
         if match:
             return parse_rupiah_pintar(match.group(1))
 
-    # LOGIKA BARU PENCEGAH BUG TRILIUNAN (JUTA dieksekusi lebih dulu daripada T)
+    # SOLUSI BUG TRILIUNAN: Cek 'jt' sebelum 't'
     match_unit = re.search(r"([\d\.,]+)\s*(Miliar|Juta|Triliun|M|Jt|Rb|Ribu|T)\b", text_str, re.IGNORECASE)
     if match_unit:
         raw_num = match_unit.group(1).replace(".", "").replace(",", ".")
@@ -541,7 +530,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (PENARIKAN API & STANDARISASI KATEGORI)
+# 4. SCRAPER ENGINE (NON-HEADLESS ANTI CLOUDFLARE)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -555,27 +544,21 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
     all_scraped_data = []
 
     with sync_playwright() as p:
+        # ----------------------------------------------------------------------
+        # SILVER BULLET: headless=False agar wujud aslinya keluar & bypass Cloudflare!
+        # ----------------------------------------------------------------------
         browser = p.chromium.launch(
-            headless=True,
-            args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-setuid-sandbox"],
+            headless=False,
+            args=[
+                "--disable-dev-shm-usage", 
+                "--no-sandbox", 
+                "--disable-setuid-sandbox",
+                "--disable-blink-features=AutomationControlled"
+            ],
         )
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
-        
-        # INJEKSI COOKIES UNTUK MEMBUKA BLOKIRAN CLOUDFLARE
-        if RAW_COOKIES:
-            parsed_cookies = []
-            for c in RAW_COOKIES.split(";"):
-                if "=" in c:
-                    name, value = c.strip().split("=", 1)
-                    parsed_cookies.append({
-                        "name": name,
-                        "value": value,
-                        "domain": ".inaproc.id",
-                        "path": "/"
-                    })
-            context.add_cookies(parsed_cookies)
 
         KAT_MAP = {
             "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
