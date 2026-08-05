@@ -230,47 +230,43 @@ INDONESIAN_MONTHS = {
 # ==============================================================================
 # 3. HELPER NORMALISASI & CLEANER KETAT
 # ==============================================================================
-def normalize_jenis_pengadaan(text, nama_paket=""):
+def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
     """
-    STANDARISASI OTOMATIS SELURUH VARIASI TEKS SPSE KE 3 KATEGORI RESMI
+    STANDARISASI PRESISI 3 KATEGORI RESMI TERPROTEKSI
     """
-    s = str(text).lower().strip()
+    rj_lower = str(real_jenis).lower().strip()
     np_lower = str(nama_paket).lower().strip()
+    raw_lower = str(raw_cat).lower().strip()
     
-    # 1. Menolak Kategori BUKAN Target
-    if "lainnya" in s or "barang" in s or s == "pekerjaan konstruksi":
-        return "INVALID"
-        
-    # 2. Proteksi Khusus Proyek IT/Software -> Dialihkan ke Non-Konstruksi
-    if any(k in np_lower for k in ["software", "programmer", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi", "hardware", "laptop", "server"]):
-        if "konsultan" in s or "konsultan" in np_lower or "konsultansi" in s:
-            return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+    # 1. Menolak Kategori yang Jelas BUKAN Target
+    if rj_lower in ["jasa lainnya", "pengadaan barang"] or "lainnya" in rj_lower or "barang" in rj_lower:
         return "INVALID"
 
-    # 3. Deteksi Konstruksi Terintegrasi (Hanya Konstruksi/Rancang Bangun Fisik)
-    if "konstruksi terintegrasi" in s or "pekerjaan terintegrasi" in s or "design & build" in s or "rancang bangun" in s:
-        return "Pekerjaan Konstruksi Terintegrasi"
-    if "terintegrasi" in s and ("konstruksi" in s or "pekerjaan" in s):
-        return "Pekerjaan Konstruksi Terintegrasi"
-    if "terintegrasi" in np_lower and any(k in np_lower for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "rancang", "design & build"]):
+    # 2. Proteksi Khusus Pekerjaan Konstruksi Terintegrasi
+    if "terintegrasi" in raw_lower or "terintegrasi" in rj_lower:
+        if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah"]):
+            if "konsultan" in np_lower or "konsultansi" in rj_lower:
+                return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+            return "INVALID"
         return "Pekerjaan Konstruksi Terintegrasi"
 
-    # 4. Deteksi Konsultansi Non-Konstruksi
-    if "non" in s and ("konstruksi" in s or "konsult" in s):
+    # 3. Kunci Kategori 4: Jasa Konsultansi Badan Usaha Konstruksi
+    if "konstruksi" in raw_lower and "non" not in raw_lower and "konsult" in raw_lower:
+        return "Jasa Konsultansi Badan Usaha Konstruksi"
+    if "konstruksi" in rj_lower and "non" not in rj_lower and "konsult" in rj_lower:
+        return "Jasa Konsultansi Badan Usaha Konstruksi"
+
+    # 4. Kunci Kategori 3: Jasa Konsultansi Badan Usaha Non Konstruksi
+    if "non" in raw_lower or "non" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
-    # 5. Deteksi Konsultansi Konstruksi
-    if "konsult" in s and "konstruksi" in s:
-        return "Jasa Konsultansi Badan Usaha Konstruksi"
-    
-    full_text = f"{s} {np_lower}"
-    if any(k in full_text for k in ["konsult", "pengawasan", "perencanaan", "ded", "mk ", "manajemen konstruksi", "supervisi", "feasibility"]):
-        if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom"]):
+    # 5. Analisis Kata Kunci
+    full_text = f"{raw_lower} {rj_lower} {np_lower}"
+    if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom", "ded", "supervisi", "manajemen konstruksi"]):
+        if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi"]):
             return "Jasa Konsultansi Badan Usaha Konstruksi"
-        else:
-            return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
-    if "konsult" in s:
+    if "konsult" in raw_lower or "konsult" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
     return "INVALID"
@@ -330,17 +326,12 @@ def extract_nilai_kontrak_from_text(text):
     return 0.0
 
 def clean_df_master(df):
-    """
-    MEMINDAHKAN SELURUH DATA KE 3 KATEGORI RESMI & MENYARING DATA VALID
-    """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
-    
-    # Standarisasi otomatis kolom "Jenis Pengadaan"
     df["Jenis Pengadaan"] = df.apply(
-        lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Nama Paket", "")), axis=1
+        lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], "", r.get("Nama Paket", "")), axis=1
     )
 
     return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
@@ -530,7 +521,6 @@ def save_and_update_excel(df_new, file_output):
     else:
         df_final = df_new if not df_new.empty else pd.DataFrame(columns=KOLOM_TARGET)
 
-    # Clean & normalize all categories
     df_final = clean_df_master(df_final)
 
     with pd.ExcelWriter(file_output, engine="openpyxl") as writer:
@@ -570,7 +560,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             "8": "Pekerjaan Konstruksi Terintegrasi"
         }
 
-        # JS FETCHER LANGSUNG KE API DATATABLES UNTUK SEMUA KATEGORI
+        # JS FETCHER + FALLBACK DOM SCRAPING
         js_auto_fetcher = """
         async (args) => {
             const { baseDomain, tahun, katId } = args;
@@ -589,7 +579,23 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     }
                 } catch(e) {}
             }
-            return [];
+            
+            let results = [];
+            let trs = document.querySelectorAll('table tbody tr');
+            for (let tr of trs) {
+                let tds = tr.querySelectorAll('td');
+                if (tds.length >= 4) {
+                    if (tds.length === 1 && tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
+                    results.push([
+                        tds[0].innerText.trim(),
+                        tds[1].innerHTML.trim(),
+                        tds[2].innerText.trim(),
+                        tds[3].innerText.trim(),
+                        tds.length > 4 ? tds[4].innerText.trim() : ""
+                    ]);
+                }
+            }
+            return results;
         }
         """
 
@@ -668,11 +674,8 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    # NORMALISASI KATEGORI RESMI SECARA PRESISI
-                    raw_cat = real_jenis if real_jenis else cand["Jenis Pengadaan"]
-                    final_cat = normalize_jenis_pengadaan(raw_cat, cand["Nama Paket"])
+                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], real_jenis, cand["Nama Paket"])
 
-                    # JIKA BUKAN KATEGORI RESMI -> TOLAK!
                     if final_cat not in ALL_3_CATEGORIES:
                         continue
 
