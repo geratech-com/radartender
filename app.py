@@ -170,26 +170,43 @@ INDONESIAN_MONTHS = {
 # ==============================================================================
 # 3. HELPER NORMALISASI & CLEANER KETAT
 # ==============================================================================
-def normalize_jenis_pengadaan(raw_cat, nama_paket=""):
-    c = str(raw_cat).lower().strip()
-    np = str(nama_paket).lower().strip()
+def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
+    rj_lower = str(real_jenis).lower().strip()
+    np_lower = str(nama_paket).lower().strip()
+    raw_lower = str(raw_cat).lower().strip()
     
-    if "lainnya" in c or "barang" in c or c == "pekerjaan konstruksi": return "INVALID"
-    if any(k in np for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
-        if "konsultan" in np or "konsultansi" in c: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+    if rj_lower in ["jasa lainnya", "pengadaan barang", "pekerjaan konstruksi"] or "lainnya" in rj_lower or "barang" in rj_lower:
         return "INVALID"
-    if "terintegrasi" in c or "terintegrasi" in np or "design & build" in np: return "Pekerjaan Konstruksi Terintegrasi"
-    if "konsult" in c and "konstruksi" in c and "non" not in c: return "Jasa Konsultansi Badan Usaha Konstruksi"
-    if "non" in c and "konsult" in c: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-    if "konsult" in c:
-        if any(k in np for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi"]):
-            return "Jasa Konsultansi Badan Usaha Konstruksi"
+
+    if "terintegrasi" in raw_lower or "terintegrasi" in rj_lower:
+        if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
+            if "konsultan" in np_lower or "konsultansi" in rj_lower:
+                return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+            return "INVALID"
+        return "Pekerjaan Konstruksi Terintegrasi"
+
+    if "konstruksi" in raw_lower and "non" not in raw_lower and "konsult" in raw_lower:
+        return "Jasa Konsultansi Badan Usaha Konstruksi"
+    if "konstruksi" in rj_lower and "non" not in rj_lower and "konsult" in rj_lower:
+        return "Jasa Konsultansi Badan Usaha Konstruksi"
+
+    if "non" in raw_lower or "non" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+
+    full_text = f"{raw_lower} {rj_lower} {np_lower}"
+    if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom", "ded", "supervisi", "manajemen konstruksi"]):
+        if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi"]):
+            return "Jasa Konsultansi Badan Usaha Konstruksi"
+
+    if "konsult" in raw_lower or "konsult" in rj_lower:
+        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+
     return "INVALID"
 
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
     text_str = str(text).strip()
+    
     if target_keyword:
         pattern = re.compile(rf"{target_keyword}\s*(?::|Rp\.?)?\s*([\d\.,]+(?:\s*(?:Miliar|Juta|Triliun|M|Jt|Rb|Ribu|T)\b)?)", re.IGNORECASE)
         match = pattern.search(text_str)
@@ -217,6 +234,7 @@ def parse_rupiah_pintar(text, target_keyword=None):
             val = float(clean)
             if val >= 1_000_000: valid_vals.append(val)
         except ValueError: pass
+    
     if valid_vals: return min(valid_vals)
     return 0.0
 
@@ -228,7 +246,7 @@ def extract_nilai_kontrak_from_text(text):
 def clean_df_master(df):
     if df.empty or "Jenis Pengadaan" not in df.columns: return df
     df = df.copy()
-    df["Jenis Pengadaan"] = df.apply(lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Nama Paket", "")), axis=1)
+    df["Jenis Pengadaan"] = df.apply(lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Jenis Pengadaan", ""), r.get("Nama Paket", "")), axis=1)
     return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
@@ -247,10 +265,8 @@ def format_rupiah_tabel(val):
 def format_rupiah_eksekutif(val):
     try:
         val = float(val)
-        if val >= 1_000_000_000_000:
-            return f"Rp {val/1_000_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Triliun</span>"
-        elif val >= 1_000_000_000:
-            return f"Rp {val/1_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Miliar</span>"
+        if val >= 1_000_000_000_000: return f"Rp {val/1_000_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Triliun</span>"
+        elif val >= 1_000_000_000: return f"Rp {val/1_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Miliar</span>"
         return f"Rp {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception: return "Rp 0,00"
 
@@ -281,6 +297,18 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
             if(txt === 'harga kontrak' || txt === 'nilai kontrak' || txt === 'hasil negosiasi' || txt === 'harga penawaran'){
                 let td = th.nextElementSibling;
                 if(td && td.tagName.toLowerCase() === 'td') p_kontrak = td.innerText.trim();
+            }
+        }
+        if (p_name === "Belum Ditetapkan" || p_name === "") {
+            let trs = document.querySelectorAll('table tbody tr');
+            for(let tr of trs) {
+                if(tr.innerHTML.includes('fa-star') || tr.innerHTML.includes('Pemenang') || tr.innerHTML.includes('icon-star')) {
+                    let tds = tr.querySelectorAll('td');
+                    if(tds.length >= 2) {
+                        p_name = tds[1].innerText.split('\\n')[0].trim();
+                        p_kontrak = tds[tds.length-1].innerText.trim();
+                    }
+                }
             }
         }
         return {pemenang: p_name, kontrak: p_kontrak};
@@ -342,7 +370,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = "#,##0.00"
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MAPPING ID KATEGORI DINAMIS)
+# 4. SCRAPER ENGINE (HUMAN EMULATOR & STRICT MAPPING)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32": asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -354,10 +382,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
     all_scraped_data = []
 
     with sync_playwright() as p:
+        # BROWSER NYATA, BUKAN SILUMAN (Bypass Cloudflare & Pesan Error)
         browser = p.chromium.launch(headless=False, args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        # FUNGSI PENDETEKSI ID KATEGORI OTOMATIS
+        # FUNGSI PENDETEKSI KATEGORI "STRICT BADAN USAHA"
         js_get_dynamic_categories = """
         () => {
             let map = {};
@@ -369,10 +398,13 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         let val = opt.value;
                         if (!val) continue;
                         
-                        if (txt.includes('konsultansi') && txt.includes('konstruksi') && !txt.includes('non')) {
-                            map['Jasa Konsultansi Badan Usaha Konstruksi'] = val;
-                        } else if (txt.includes('konsultansi') && txt.includes('non')) {
-                            map['Jasa Konsultansi Badan Usaha Non Konstruksi'] = val;
+                        // KUNCI UTAMA: Wajib ada kata "Badan Usaha", otomatis menolak "Perorangan"
+                        if (txt.includes('badan usaha')) {
+                            if (txt.includes('konstruksi') && !txt.includes('non')) {
+                                map['Jasa Konsultansi Badan Usaha Konstruksi'] = val;
+                            } else if (txt.includes('non')) {
+                                map['Jasa Konsultansi Badan Usaha Non Konstruksi'] = val;
+                            }
                         } else if (txt.includes('terintegrasi')) {
                             map['Pekerjaan Konstruksi Terintegrasi'] = val;
                         }
@@ -383,139 +415,136 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         }
         """
 
+        # FUNGSI MEMBACA ISI TABEL DARI DOM (LAYAR)
+        js_read_table = """
+        () => {
+            let results = [];
+            let trs = document.querySelectorAll('table tbody tr');
+            for (let tr of trs) {
+                let tds = tr.querySelectorAll('td');
+                if (tds.length >= 4) {
+                    if (tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
+                    if (tds[0].innerText.toLowerCase().includes('terjadi kesalahan')) continue;
+                    results.push({
+                        kode: tds[0].innerText.trim(),
+                        nama: tds[1].innerHTML.trim(),
+                        instansi: tds[2].innerText.trim(),
+                        tahapan: tds[3].innerText.trim(),
+                        hps: tds.length > 4 ? tds[4].innerText.trim() : ""
+                    });
+                }
+            }
+            return results;
+        }
+        """
+
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama, lpse_url = lpse["nama"], lpse["url"]
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membaca Layar & Kategori Dinamis SPSE: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Membaca Layar SPSE secara 'Sopan': **{lpse_nama}**...")
             page = context.new_page()
 
-            # 1. BUKA HALAMAN AWAL UNTUK MENGAMBIL ID KATEGORI YANG BENAR
-            dynamic_kat_map = {}
             try: 
                 page.goto(lpse_url, wait_until="domcontentloaded", timeout=25000)
-                dynamic_kat_map = page.evaluate(js_get_dynamic_categories)
-            except Exception: pass
-            
-            # Jika gagal mengambil dinamis, gunakan fallback default
+                time.sleep(2)
+            except Exception:
+                page.close()
+                continue
+                
+            # Deteksi jika URL dialihkan ke beranda portal (seperti kasus LPSE Nasional Anda)
+            if "lelang" not in page.url:
+                log_container.warning(f"⚠️ {lpse_nama} dialihkan ke Beranda Portal. Melewati...")
+                page.close()
+                continue
+
+            dynamic_kat_map = page.evaluate(js_get_dynamic_categories)
             if not dynamic_kat_map:
-                dynamic_kat_map = {
-                    "Jasa Konsultansi Badan Usaha Non Konstruksi": "3",
-                    "Jasa Konsultansi Badan Usaha Konstruksi": "4",
-                    "Pekerjaan Konstruksi Terintegrasi": "8"
-                }
+                page.close()
+                continue
+
+            # Perbesar tampilan menjadi 100 per halaman
+            try:
+                page.evaluate("() => { let s = document.querySelector('select[name$=\"_length\"]'); if(s) { s.value='100'; s.dispatchEvent(new Event('change')); } }")
+                time.sleep(2)
+            except: pass
 
             for tahun in target_years:
-                # LOOP MENGGUNAKAN ID KATEGORI YANG SUDAH DITEMUKAN DARI WEB
                 for kat_label, kat_id in dynamic_kat_map.items():
-                    url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
+                    # UBAH FILTER DROPDOWN MENGGUNAKAN JS (Menghindari "Terjadi Kesalahan")
+                    page.evaluate(f"""
+                        () => {{
+                            let selK = document.querySelector('select[name="kategoriId"]');
+                            if(selK) {{ selK.value = '{kat_id}'; selK.dispatchEvent(new Event('change')); }}
+                            let selT = document.querySelector('select[name="tahun"]');
+                            if(selT) {{ selT.value = '{tahun}'; selT.dispatchEvent(new Event('change')); }}
+                        }}
+                    """)
                     
-                    while True:
-                        try:
-                            time.sleep(1.5)
-                            page.goto(url_query, wait_until="domcontentloaded", timeout=30000)
-                            if "Terlalu Banyak Permintaan" in page.inner_text("body"):
-                                log_container.warning(f"⚠️ Terkena Limit (429) di {lpse_nama}. Istirahat 20 detik...")
-                                time.sleep(20)
-                                continue 
-                            break 
-                        except Exception: break
-                            
-                    try: page.wait_for_selector('table tbody tr', timeout=10000)
-                    except: continue
-                        
-                    try:
-                        page.select_option('select[name$="_length"]', '100', timeout=3000)
-                        time.sleep(2)
+                    # Tunggu tabel memproses loading
+                    time.sleep(1)
+                    try: page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=15000)
                     except: pass
-                        
-                    while True:
-                        try: page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=10000)
-                        except: pass
-                        
-                        rows = page.evaluate("""
-                            () => {
-                                let results = [];
-                                let trs = document.querySelectorAll('table tbody tr');
-                                for (let tr of trs) {
-                                    let tds = tr.querySelectorAll('td');
-                                    if (tds.length >= 4) {
-                                        if (tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
-                                        results.push({
-                                            kode: tds[0].innerText.trim(),
-                                            nama: tds[1].innerHTML.trim(),
-                                            instansi: tds[2].innerText.trim(),
-                                            tahapan: tds[3].innerText.trim(),
-                                            hps: tds.length > 4 ? tds[4].innerText.trim() : ""
-                                        });
-                                    }
-                                }
-                                return results;
-                            }
-                        """)
+                    time.sleep(1.5)
 
-                        if rows:
-                            for row in rows:
-                                kode_id = row.get("kode", "")
-                                if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
-                                if kode_id in candidates_dict: continue
+                    rows = page.evaluate(js_read_table)
 
-                                cell_nama_raw = row.get("nama", "")
-                                instansi = row.get("instansi", "")
-                                tahapan_raw = row.get("tahapan", "")
-                                hps_raw = row.get("hps", "")
+                    if rows:
+                        for row in rows:
+                            kode_id = row.get("kode", "")
+                            if not kode_id or not kode_id.isdigit() or len(kode_id) < 7: continue
+                            if kode_id in candidates_dict: continue
+
+                            cell_nama_raw = row.get("nama", "")
+                            instansi = row.get("instansi", "")
+                            tahapan_raw = row.get("tahapan", "")
+                            hps_raw = row.get("hps", "")
+                            
+                            match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
+                            nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip() if match_link else re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+
+                            final_cat = normalize_jenis_pengadaan(kat_label, "", nama_paket)
+                            if final_cat == "INVALID": continue
                                 
-                                match_link = re.search(r"<a[^>]*>(.*?)</a>", cell_nama_raw, re.DOTALL | re.IGNORECASE)
-                                nama_paket = re.sub(r"<[^>]+>", "", match_link.group(1)).strip() if match_link else re.sub(r"<[^>]+>", " ", cell_nama_raw).strip()
+                            hps_val = parse_rupiah_pintar(hps_raw, "HPS")
+                            if hps_val < BATAS_MINIMAL_HPS: hps_val = parse_rupiah_pintar(re.sub(r"<[^>]+>", " ", cell_nama_raw).strip(), "HPS")
 
-                                # Gunakan label kategori dari map (Anti Salah Kamar)
-                                final_cat = normalize_jenis_pengadaan(kat_label, nama_paket)
-                                if final_cat == "INVALID": continue
-                                    
-                                hps_val = parse_rupiah_pintar(hps_raw, "HPS")
-                                if hps_val < BATAS_MINIMAL_HPS: 
-                                    hps_val = parse_rupiah_pintar(re.sub(r"<[^>]+>", " ", cell_nama_raw).strip(), "HPS")
+                            if hps_val >= BATAS_MINIMAL_HPS:
+                                tahapan_clean = normalize_tahapan(tahapan_raw)
+                                nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
+                                link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
 
-                                if hps_val >= BATAS_MINIMAL_HPS:
-                                    tahapan_clean = normalize_tahapan(tahapan_raw)
-                                    nilai_kontrak_tabel = extract_nilai_kontrak_from_text(cell_nama_raw)
-                                    link_evaluasi = f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak"
-
-                                    candidates_dict[kode_id] = {
-                                        "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
-                                        "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
-                                        "HPS": float(hps_val), "Metode": "Seleksi / Tender",
-                                        "Jenis Pemilihan": "Prakualifikasi", "Evaluasi": "Kualitas & Biaya",
-                                        "Jenis Pengadaan": final_cat, "Tahun Anggaran": tahun, 
-                                        "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
-                                        "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                    }
-                        
-                        next_btn = page.locator('.paginate_button.next')
-                        if next_btn.count() > 0:
-                            if "disabled" in (next_btn.first.get_attribute("class") or ""): break
-                            try:
-                                next_btn.first.click(timeout=5000)
-                                time.sleep(random.uniform(1.0, 2.0))
-                            except: break
-                        else: break
+                                candidates_dict[kode_id] = {
+                                    "Sumber LPSE": lpse_nama, "ID LPSE": kode_id, "Tanggal Pembuatan": "-",
+                                    "Instansi": instansi, "Nama Paket": nama_paket, "Tahapan": tahapan_clean,
+                                    "HPS": float(hps_val), "Metode": "Seleksi / Tender",
+                                    "Jenis Pemilihan": "Prakualifikasi", "Evaluasi": "Kualitas & Biaya",
+                                    "Jenis Pengadaan": final_cat, "Tahun Anggaran": tahun, 
+                                    "Pemenang Kontrak": "Belum Ditetapkan", "Nilai Kontrak": float(nilai_kontrak_tabel), 
+                                    "Link": link_evaluasi, "Waktu Download": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                }
 
             page.close()
 
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
-                log_container.info(f"🔍 Mencari Pemenang untuk {len(candidates_lpse)} Kandidat Valid ({lpse_nama})...")
+                log_container.info(f"🔍 Memeriksa Detail {len(candidates_lpse)} Paket (≥ 2.5M) dari ({lpse_nama})...")
                 
                 valid_candidates = []
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    _, pemenang, nilai_kontrak_detail, _ = fetch_detail_paket(context, base_domain, cand["ID LPSE"], lpse_url)
+                    _, pemenang, nilai_kontrak_detail, _, real_jenis = fetch_detail_paket(context, base_domain, cand["ID LPSE"], lpse_url)
 
+                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], real_jenis, cand["Nama Paket"])
+                    if final_cat not in ALL_3_CATEGORIES: continue
+
+                    cand["Jenis Pengadaan"] = final_cat
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
                     if nilai_kontrak_detail >= 1_000_000: cand["Nilai Kontrak"] = float(nilai_kontrak_detail)
+                    
                     valid_candidates.append(cand)
 
                 status_text.empty()
