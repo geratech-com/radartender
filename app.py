@@ -231,8 +231,45 @@ INDONESIAN_MONTHS = {
 }
 
 # ==============================================================================
-# 3. HELPER PARSING & CLEANER KETAT
+# 3. HELPER NORMALISASI & CLEANER KETAT
 # ==============================================================================
+def normalize_jenis_pengadaan(text, nama_paket=""):
+    """
+    STANDARISASI OTOMATIS SELURUH VARIASI TEKS SPSE KE 3 KATEGORI RESMI
+    """
+    s = str(text).lower().strip()
+    np_lower = str(nama_paket).lower().strip()
+    
+    # 1. Menolak Kategori yang Jelas BUKAN Target (Jasa Lainnya, Barang, Konstruksi Fisik Murni)
+    if "lainnya" in s or "barang" in s or s == "pekerjaan konstruksi":
+        return "INVALID"
+        
+    # 2. Deteksi Konstruksi Terintegrasi
+    if "terintegrasi" in s or "terintegrasi" in np_lower or "design & build" in np_lower or "rancang bangun" in np_lower:
+        return "Pekerjaan Konstruksi Terintegrasi"
+        
+    # 3. Deteksi Konsultansi Non-Konstruksi
+    if "non" in s and ("konstruksi" in s or "konsult" in s):
+        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+        
+    # 4. Deteksi Konsultansi Konstruksi
+    if "konstruksi" in s and "konsult" in s:
+        return "Jasa Konsultansi Badan Usaha Konstruksi"
+        
+    # 5. Analisis Kata Kunci pada Nama Paket
+    full_text = f"{s} {np_lower}"
+    if any(k in full_text for k in ["konsult", "pengawasan", "perencanaan", "ded", "mk ", "manajemen konstruksi", "supervisi", "feasibility"]):
+        if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom"]):
+            return "Jasa Konsultansi Badan Usaha Konstruksi"
+        else:
+            return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+
+    if "konsult" in s:
+        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+        
+    return "INVALID"
+
+
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
     text_str = str(text).strip()
@@ -288,27 +325,19 @@ def extract_nilai_kontrak_from_text(text):
 
 def clean_df_master(df):
     """
-    FILTRASI MUTLAK: HANYA MELOLOSKAN 3 KATEGORI RESMI.
-    MAMPU MEMBUANG 'JASA LAINNYA' DAN 'PEKERJAAN KONSTRUKSI' MURNI.
+    MEMINDAH KAN SELURUH DATA KE 3 KATEGORI RESMI & MENYARING DATA VALID
     """
     if df.empty or "Jenis Pengadaan" not in df.columns:
         return df
 
     df = df.copy()
     
-    def is_strictly_valid(row):
-        jp = str(row.get("Jenis Pengadaan", "")).strip()
-        if jp in ALL_3_CATEGORIES:
-            return True
-        jp_lower = jp.lower()
-        if "lainnya" in jp_lower or "barang" in jp_lower or jp_lower == "pekerjaan konstruksi":
-            return False
-        if ("konsultansi" in jp_lower or "terintegrasi" in jp_lower) and ("konstruksi" in jp_lower or "badan usaha" in jp_lower):
-            return True
-        return False
+    # Standarisasi kolom "Jenis Pengadaan"
+    df["Jenis Pengadaan"] = df.apply(
+        lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Nama Paket", "")), axis=1
+    )
 
-    mask = df.apply(is_strictly_valid, axis=1)
-    return df[mask].reset_index(drop=True)
+    return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
 
 def normalize_tahapan(tahapan_raw):
     t_clean = re.sub(r"<[^>]+>", " ", str(tahapan_raw)).strip()
@@ -369,7 +398,6 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
     tgl_pembuatan = "-"
     real_jenis_pengadaan = ""
 
-    # EKSTRAKSI DETEKSI PRESISI JENIS PENGADAAN DARI TABEL SPSE
     js_pengumuman_extractor = """
     () => {
         let hps = "";
@@ -496,7 +524,7 @@ def save_and_update_excel(df_new, file_output):
     else:
         df_final = df_new if not df_new.empty else pd.DataFrame(columns=KOLOM_TARGET)
 
-    # PEMBERSAPAN OTOMATIS: DARI SISA-SISA JASA LAINNYA
+    # Clean & normalize all categories
     df_final = clean_df_master(df_final)
 
     with pd.ExcelWriter(file_output, engine="openpyxl") as writer:
@@ -508,7 +536,7 @@ def save_and_update_excel(df_new, file_output):
             worksheet[f"N{row}"].number_format = num_format
 
 # ==============================================================================
-# 4. SCRAPER ENGINE (MEMERIKSA DAN MENOLAK JASA LAINNYA secara REAL-TIME)
+# 4. SCRAPER ENGINE (PENARIKAN API & STANDARISASI KATEGORI)
 # ==============================================================================
 def run_scraper(selected_lpse, target_years, max_pages, log_container):
     if sys.platform == "win32":
@@ -536,28 +564,49 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             "8": "Pekerjaan Konstruksi Terintegrasi"
         }
 
+        # JS FETCHER LANGSUNG KE API DATATABLES UNTUK SEMUA KATEGORI
+        js_auto_fetcher = """
+        async (args) => {
+            const { baseDomain, tahun, katId } = args;
+            const endpoints = [
+                `${baseDomain}/dt/lelang?draw=1&start=0&length=500&tahun=${tahun}&kategoriId=${katId}`,
+                `${baseDomain}/dt/lelang?draw=1&start=0&length=500&kategoriId=${katId}`
+            ];
+            for (let url of endpoints) {
+                try {
+                    const resp = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+                    if (resp.ok) {
+                        const json = await resp.json();
+                        if (json && json.data && Array.isArray(json.data) && json.data.length > 0) {
+                            return json.data;
+                        }
+                    }
+                } catch(e) {}
+            }
+            return [];
+        }
+        """
+
         for idx, lpse in enumerate(selected_lpse, 1):
             lpse_nama = lpse["nama"]
             lpse_url = lpse["url"]
             base_domain = lpse_url.replace("/lelang", "")
             candidates_dict = {}
 
-            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Mencegat Data API SPSE: **{lpse_nama}**...")
+            log_container.info(f"⚡ [{idx}/{len(selected_lpse)}] Menyedot Data API SPSE: **{lpse_nama}**...")
 
             page = context.new_page()
 
+            try:
+                page.goto(lpse_url, wait_until="domcontentloaded", timeout=25000)
+            except Exception:
+                pass
+
             for tahun in target_years:
                 for kat_id, kat_label in KAT_MAP.items():
-                    url_query = f"{lpse_url}?tahun={tahun}&kategoriId={kat_id}"
                     rows_data = []
-                    
                     try:
-                        with page.expect_response(lambda r: "dt/lelang" in r.url.lower() and r.request.resource_type in ["xhr", "fetch"], timeout=20000) as response_info:
-                            page.goto(url_query, wait_until="domcontentloaded")
-                        
-                        resp = response_info.value
-                        json_data = resp.json()
-                        rows_data = json_data.get("data", [])
+                        rows_data = page.evaluate(js_auto_fetcher, {"baseDomain": base_domain, "tahun": tahun, "katId": kat_id})
                     except Exception:
                         pass
                         
@@ -603,7 +652,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             candidates_lpse = list(candidates_dict.values())
             if candidates_lpse:
                 status_text = st.empty()
-                log_container.info(f"🔍 Memeriksa Detail & Jenis Pengadaan untuk {len(candidates_lpse)} paket dari ({lpse_nama})...")
+                log_container.info(f"🔍 Memeriksa Detail {len(candidates_lpse)} Paket (≥ 2.5M) dari ({lpse_nama})...")
                 
                 valid_candidates = []
                 for i, cand in enumerate(candidates_lpse):
@@ -613,20 +662,15 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    # APABILA TERTANGKAP BAHWA JENIS PENGADAAN ASLINYA ADALAH JASA LAINNYA/BARANG/KONSTRUKSI MURNI -> BUANG LANGSUNG!
-                    if real_jenis:
-                        cand["Jenis Pengadaan"] = real_jenis
+                    # NORMALISASI KATEGORI RESMI SECARA PRESISI
+                    raw_cat = real_jenis if real_jenis else cand["Jenis Pengadaan"]
+                    final_cat = normalize_jenis_pengadaan(raw_cat, cand["Nama Paket"])
 
-                    jp_check = cand["Jenis Pengadaan"].strip()
-                    jp_lower = jp_check.lower()
-
-                    if "lainnya" in jp_lower or "barang" in jp_lower or jp_lower == "pekerjaan konstruksi":
+                    # JIKA BUKAN KATEGORI RESMI -> TOLAK!
+                    if final_cat not in ALL_3_CATEGORIES:
                         continue
 
-                    if jp_check not in ALL_3_CATEGORIES:
-                        if not ("konsultansi" in jp_lower or "terintegrasi" in jp_lower):
-                            continue
-
+                    cand["Jenis Pengadaan"] = final_cat
                     cand["Tanggal Pembuatan"] = tgl_pembuatan if tgl_pembuatan != "-" else "-"
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
                     if nilai_kontrak_detail >= 1_000_000: cand["Nilai Kontrak"] = float(nilai_kontrak_detail)
@@ -639,7 +683,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     df_lpse = pd.DataFrame(valid_candidates, columns=KOLOM_TARGET)
                     save_and_update_excel(df_lpse, FILE_EXCEL_OUTPUT)
                     all_scraped_data.extend(valid_candidates)
-                    log_container.success(f"🎉 [{lpse_nama}] Berhasil Menyimpan {len(valid_candidates)} Paket Valid 3 Kategori!")
+                    log_container.success(f"🎉 [{lpse_nama}] Berhasil Menyimpan {len(valid_candidates)} Paket Valid!")
 
         browser.close()
 
