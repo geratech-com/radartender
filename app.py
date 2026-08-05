@@ -14,6 +14,12 @@ from playwright.sync_api import sync_playwright
 import streamlit as st
 
 # ==============================================================================
+# 0. KONFIGURASI COOKIES SPSE (ANTI-BLOKIR CLOUDFLARE)
+# ==============================================================================
+# Tempelkan cookies terbaru dari browser Anda di sini jika suatu saat script kembali diblokir (0 data)
+RAW_COOKIES = "_ga=GA1.1.2050872497.1784866919; __cf_bm=udk55.Cl1ZBux6Wkc2WgzIuMVnfbvN1sD6vN.QzCuno-1785917508.9321837-1.0.1.1-phur3ptgBte6Dd70xIeiv2CJnTTyY2xq1gfjMU4Gd4HYrppP4zCx2yFWioj9o6sFgOvdxPIZg8iX4xe9BpHtRwkam0QrasUGL3Fn7HEy.CpuHlkPH1P2rftXScJ1AAX6; _cfuvid=J30XFmLxeZ7Facy6BoQQipax6nbJYpR4l03IsLCVvis-1785917508.9321837-1.0.1.1-YX33n90SpxTA6LNqtW.4H_aAAtHzQZmO0TEoY9mSCz0; SPSE_SESSION=d1583ce0ab28e9f5b9dd8b88b76092f03be06769-___AT=755544c0106bc4025f205d99ea42c956668fea6d&___TS=1785919941685&___ID=59cc739a-58fd-465a-9210-93c4a42371ee; _ga_KLDH3FQ7DR=GS2.1.s1785917509$o24$g1$t1785918141$j14$l0$h0"
+
+# ==============================================================================
 # FIX KHUSUS WINDOWS + STREAMLIT + PLAYWRIGHT SUBPROCESS
 # ==============================================================================
 if sys.platform == "win32":
@@ -174,6 +180,9 @@ DAFTAR_LPSE = [
     {"nama": "Prov Papua", "url": "https://spse.inaproc.id/papua/lelang"},
     {"nama": "Prov Papua Barat", "url": "https://spse.inaproc.id/papuabarat/lelang"},
     {"nama": "Prov Papua Selatan", "url": "https://spse.inaproc.id/papuaselatan/lelang"},
+    {"nama": "Prov Papua Tengah", "url": "https://spse.inaproc.id/papuatengah/lelang"},
+    {"nama": "Prov Papua Pegunungan", "url": "https://spse.inaproc.id/papuapegunungan/lelang"},
+    {"nama": "Prov Papua Barat Daya", "url": "https://spse.inaproc.id/papuabaratdaya/lelang"},
     {"nama": "Kota Surabaya", "url": "https://spse.inaproc.id/surabaya/lelang"},
     {"nama": "Kota Medan", "url": "https://spse.inaproc.id/medan/lelang"},
     {"nama": "Kota Makassar", "url": "https://spse.inaproc.id/makassar/lelang"},
@@ -239,12 +248,12 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
     raw_lower = str(raw_cat).lower().strip()
     
     # 1. Menolak Kategori yang Jelas BUKAN Target
-    if rj_lower in ["jasa lainnya", "pengadaan barang"] or "lainnya" in rj_lower or "barang" in rj_lower:
+    if rj_lower in ["jasa lainnya", "pengadaan barang", "pekerjaan konstruksi"] or "lainnya" in rj_lower or "barang" in rj_lower:
         return "INVALID"
 
     # 2. Proteksi Khusus Pekerjaan Konstruksi Terintegrasi
     if "terintegrasi" in raw_lower or "terintegrasi" in rj_lower:
-        if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah"]):
+        if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
             if "konsultan" in np_lower or "konsultansi" in rj_lower:
                 return "Jasa Konsultansi Badan Usaha Non Konstruksi"
             return "INVALID"
@@ -260,7 +269,7 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
     if "non" in raw_lower or "non" in rj_lower:
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
-    # 5. Analisis Kata Kunci
+    # 5. Analisis Kata Kunci pada Paket
     full_text = f"{raw_lower} {rj_lower} {np_lower}"
     if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom", "ded", "supervisi", "manajemen konstruksi"]):
         if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi"]):
@@ -270,7 +279,6 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
         return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
     return "INVALID"
-
 
 def parse_rupiah_pintar(text, target_keyword=None):
     if not text or str(text).strip() in ["-", "0", "Nilai Kontrak belum dibuat"]: return 0.0
@@ -282,14 +290,15 @@ def parse_rupiah_pintar(text, target_keyword=None):
         if match:
             return parse_rupiah_pintar(match.group(1))
 
+    # LOGIKA BARU PENCEGAH BUG TRILIUNAN (JUTA dieksekusi lebih dulu daripada T)
     match_unit = re.search(r"([\d\.,]+)\s*(Miliar|Juta|Triliun|M|Jt|Rb|Ribu|T)\b", text_str, re.IGNORECASE)
     if match_unit:
         raw_num = match_unit.group(1).replace(".", "").replace(",", ".")
         unit = match_unit.group(2).lower()
         mult = 1
-        if "m" in unit: mult = 1_000_000_000
+        if "jt" in unit or "juta" in unit: mult = 1_000_000
+        elif "m" in unit: mult = 1_000_000_000
         elif "t" in unit: mult = 1_000_000_000_000
-        elif "jt" in unit or "juta" in unit: mult = 1_000_000
         elif "rb" in unit or "ribu" in unit: mult = 1_000
         try:
             val = float(raw_num) * mult
@@ -331,7 +340,7 @@ def clean_df_master(df):
 
     df = df.copy()
     df["Jenis Pengadaan"] = df.apply(
-        lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], "", r.get("Nama Paket", "")), axis=1
+        lambda r: normalize_jenis_pengadaan(r["Jenis Pengadaan"], r.get("Jenis Pengadaan", ""), r.get("Nama Paket", "")), axis=1
     )
 
     return df[df["Jenis Pengadaan"].isin(ALL_3_CATEGORIES)].reset_index(drop=True)
@@ -553,6 +562,20 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
+        
+        # INJEKSI COOKIES UNTUK MEMBUKA BLOKIRAN CLOUDFLARE
+        if RAW_COOKIES:
+            parsed_cookies = []
+            for c in RAW_COOKIES.split(";"):
+                if "=" in c:
+                    name, value = c.strip().split("=", 1)
+                    parsed_cookies.append({
+                        "name": name,
+                        "value": value,
+                        "domain": ".inaproc.id",
+                        "path": "/"
+                    })
+            context.add_cookies(parsed_cookies)
 
         KAT_MAP = {
             "3": "Jasa Konsultansi Badan Usaha Non Konstruksi",
@@ -560,7 +583,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
             "8": "Pekerjaan Konstruksi Terintegrasi"
         }
 
-        # JS FETCHER + FALLBACK DOM SCRAPING
         js_auto_fetcher = """
         async (args) => {
             const { baseDomain, tahun, katId } = args;
@@ -579,23 +601,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                     }
                 } catch(e) {}
             }
-            
-            let results = [];
-            let trs = document.querySelectorAll('table tbody tr');
-            for (let tr of trs) {
-                let tds = tr.querySelectorAll('td');
-                if (tds.length >= 4) {
-                    if (tds.length === 1 && tds[0].innerText.toLowerCase().includes('tidak ada')) continue;
-                    results.push([
-                        tds[0].innerText.trim(),
-                        tds[1].innerHTML.trim(),
-                        tds[2].innerText.trim(),
-                        tds[3].innerText.trim(),
-                        tds.length > 4 ? tds[4].innerText.trim() : ""
-                    ]);
-                }
-            }
-            return results;
+            return [];
         }
         """
 
@@ -674,6 +680,7 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
+                    # NORMALISASI KATEGORI RESMI SECARA PRESISI 100%
                     final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], real_jenis, cand["Nama Paket"])
 
                     if final_cat not in ALL_3_CATEGORIES:
