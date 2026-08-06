@@ -256,6 +256,12 @@ def normalize_tahapan(tahapan_raw):
         if re.sub(r"^\d+\.\s*", "", t_resmi).lower() in t_lower: return t_resmi
     return t_clean
 
+def parse_tgl_pembuatan(tgl_str):
+    if pd.isna(tgl_str) or str(tgl_str).strip() in ["-", ""]: return pd.NaT
+    s = str(tgl_str).lower().strip()
+    for id_m, en_m in INDONESIAN_MONTHS.items(): s = s.replace(id_m, en_m)
+    return pd.to_datetime(s, errors="coerce", dayfirst=True)
+
 def format_rupiah_tabel(val):
     try:
         val = float(val)
@@ -265,8 +271,10 @@ def format_rupiah_tabel(val):
 def format_rupiah_eksekutif(val):
     try:
         val = float(val)
-        if val >= 1_000_000_000_000: return f"Rp {val/1_000_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Triliun</span>"
-        elif val >= 1_000_000_000: return f"Rp {val/1_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Miliar</span>"
+        if val >= 1_000_000_000_000:
+            return f"Rp {val/1_000_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Triliun</span>"
+        elif val >= 1_000_000_000:
+            return f"Rp {val/1_000_000_000:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " <span style='font-size: 1rem;'>Miliar</span>"
         return f"Rp {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except Exception: return "Rp 0,00"
 
@@ -382,11 +390,9 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
     all_scraped_data = []
 
     with sync_playwright() as p:
-        # BROWSER NYATA, BUKAN SILUMAN (Bypass Cloudflare & Pesan Error)
         browser = p.chromium.launch(headless=False, args=["--disable-dev-shm-usage", "--no-sandbox", "--disable-blink-features=AutomationControlled"])
         context = browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
-        # FUNGSI PENDETEKSI KATEGORI "STRICT BADAN USAHA"
         js_get_dynamic_categories = """
         () => {
             let map = {};
@@ -398,7 +404,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         let val = opt.value;
                         if (!val) continue;
                         
-                        // KUNCI UTAMA: Wajib ada kata "Badan Usaha", otomatis menolak "Perorangan"
                         if (txt.includes('badan usaha')) {
                             if (txt.includes('konstruksi') && !txt.includes('non')) {
                                 map['Jasa Konsultansi Badan Usaha Konstruksi'] = val;
@@ -415,7 +420,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
         }
         """
 
-        # FUNGSI MEMBACA ISI TABEL DARI DOM (LAYAR)
         js_read_table = """
         () => {
             let results = [];
@@ -453,7 +457,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 page.close()
                 continue
                 
-            # Deteksi jika URL dialihkan ke beranda portal (seperti kasus LPSE Nasional Anda)
             if "lelang" not in page.url:
                 log_container.warning(f"⚠️ {lpse_nama} dialihkan ke Beranda Portal. Melewati...")
                 page.close()
@@ -464,7 +467,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 page.close()
                 continue
 
-            # Perbesar tampilan menjadi 100 per halaman
             try:
                 page.evaluate("() => { let s = document.querySelector('select[name$=\"_length\"]'); if(s) { s.value='100'; s.dispatchEvent(new Event('change')); } }")
                 time.sleep(2)
@@ -472,7 +474,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
 
             for tahun in target_years:
                 for kat_label, kat_id in dynamic_kat_map.items():
-                    # UBAH FILTER DROPDOWN MENGGUNAKAN JS (Menghindari "Terjadi Kesalahan")
                     page.evaluate(f"""
                         () => {{
                             let selK = document.querySelector('select[name="kategoriId"]');
@@ -482,7 +483,6 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                         }}
                     """)
                     
-                    # Tunggu tabel memproses loading
                     time.sleep(1)
                     try: page.wait_for_selector('div.dataTables_processing', state='hidden', timeout=15000)
                     except: pass
@@ -536,12 +536,16 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    _, pemenang, nilai_kontrak_detail, _, real_jenis = fetch_detail_paket(context, base_domain, cand["ID LPSE"], lpse_url)
+                    # PERBAIKAN: Hanya mengambil 4 variabel
+                    _, pemenang, nilai_kontrak_detail, tgl_pembuatan = fetch_detail_paket(
+                        context, base_domain, cand["ID LPSE"], lpse_url
+                    )
 
-                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], real_jenis, cand["Nama Paket"])
+                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], "", cand["Nama Paket"])
                     if final_cat not in ALL_3_CATEGORIES: continue
 
                     cand["Jenis Pengadaan"] = final_cat
+                    if tgl_pembuatan != "-": cand["Tanggal Pembuatan"] = tgl_pembuatan
                     if pemenang != "Belum Ditetapkan": cand["Pemenang Kontrak"] = pemenang
                     if nilai_kontrak_detail >= 1_000_000: cand["Nilai Kontrak"] = float(nilai_kontrak_detail)
                     
