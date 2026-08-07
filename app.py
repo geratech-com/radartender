@@ -89,6 +89,9 @@ FILE_EXCEL_OUTPUT = "Hasil_Penarikan_LPSE_Nasional.xlsx"
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/geratech-com/radartender/main/Hasil_Penarikan_LPSE_Nasional.xlsx"
 BATAS_MINIMAL_HPS = 2_500_000_000  # Rp 2,5 Miliar
 
+# ==============================================================================
+# 2. DAFTAR TARGET LPSE LENGKAP SE-INDONESIA & MASTER DATA (104 PORTAL)
+# ==============================================================================
 DAFTAR_LPSE = [
     {"nama": "LPSE Nasional", "url": "https://spse.inaproc.id/nasional/lelang"},
     {"nama": "Kementerian PUPR", "url": "https://spse.inaproc.id/pu/lelang"},
@@ -135,6 +138,64 @@ DAFTAR_LPSE = [
     {"nama": "BNN", "url": "https://spse.inaproc.id/bnn/lelang"},
     {"nama": "KPU RI", "url": "https://spse.inaproc.id/kpu/lelang"},
     {"nama": "BRIN", "url": "https://spse.inaproc.id/brin/lelang"},
+    {"nama": "Prov DKI Jakarta", "url": "https://spse.inaproc.id/jakarta/lelang"},
+    {"nama": "Prov Jawa Barat", "url": "https://spse.inaproc.id/jabar/lelang"},
+    {"nama": "Prov Jawa Tengah", "url": "https://spse.inaproc.id/jateng/lelang"},
+    {"nama": "Prov D.I. Yogyakarta", "url": "https://spse.inaproc.id/jogjaprov/lelang"},
+    {"nama": "Prov Jawa Timur", "url": "https://spse.inaproc.id/jatim/lelang"},
+    {"nama": "Prov Banten", "url": "https://spse.inaproc.id/banten/lelang"},
+    {"nama": "Prov Bali", "url": "https://spse.inaproc.id/baliprov/lelang"},
+    {"nama": "Prov Aceh", "url": "https://spse.inaproc.id/aceh/lelang"},
+    {"nama": "Prov Sumatera Utara", "url": "https://spse.inaproc.id/sumut/lelang"},
+    {"nama": "Prov Sumatera Barat", "url": "https://spse.inaproc.id/sumbar/lelang"},
+    {"nama": "Prov Riau", "url": "https://spse.inaproc.id/riau/lelang"},
+    {"nama": "Prov Kepulauan Riau", "url": "https://spse.inaproc.id/kepri/lelang"},
+    {"nama": "Prov Jambi", "url": "https://spse.inaproc.id/jambi/lelang"},
+    {"nama": "Prov Sumatera Selatan", "url": "https://spse.inaproc.id/sumsel/lelang"},
+    {"nama": "Prov Bangka Belitung", "url": "https://spse.inaproc.id/babel/lelang"},
+    {"nama": "Prov Bengkulu", "url": "https://spse.inaproc.id/bengkulu/lelang"},
+    {"nama": "Prov Lampung", "url": "https://spse.inaproc.id/lampung/lelang"},
+    {"nama": "Prov Kalimantan Barat", "url": "https://spse.inaproc.id/kalbar/lelang"},
+    {"nama": "Prov Kalimantan Tengah", "url": "https://spse.inaproc.id/kalteng/lelang"},
+    {"nama": "Prov Kalimantan Selatan", "url": "https://spse.inaproc.id/kalsel/lelang"},
+    {"nama": "Prov Kalimantan Timur", "url": "https://spse.inaproc.id/kaltim/lelang"},
+    {"nama": "Prov Kalimantan Utara", "url": "https://spse.inaproc.id/kaltara/lelang"},
+    {"nama": "Prov NTB", "url": "https://spse.inaproc.id/ntb/lelang"},
+    {"nama": "Prov NTT", "url": "https://spse.inaproc.id/ntt/lelang"},
+    {"nama": "Prov Sulawesi Utara", "url": "https://spse.inaproc.id/sulut/lelang"},
+    {"nama": "Prov Sulawesi Tengah", "url": "https://spse.inaproc.id/sulteng/lelang"},
+    {"nama": "Prov Sulawesi Selatan", "url": "https://spse.inaproc.id/sulsel/lelang"},
+    {"nama": "Prov Sulawesi Tenggara", "url": "https://spse.inaproc.id/sultra/lelang"},
+    {"nama": "Prov Gorontalo", "url": "https://spse.inaproc.id/gorontaloprov/lelang"},
+    {"nama": "Prov Sulawesi Barat", "url": "https://spse.inaproc.id/sulbar/lelang"},
+    {"nama": "Prov Maluku", "url": "https://spse.inaproc.id/maluku/lelang"},
+    {"nama": "Prov Maluku Utara", "url": "https://spse.inaproc.id/malut/lelang"},
+    {"nama": "Prov Papua", "url": "https://spse.inaproc.id/papua/lelang"},
+    {"nama": "Prov Papua Barat", "url": "https://spse.inaproc.id/papuabarat/lelang"},
+    {"nama": "Prov Papua Selatan", "url": "https://spse.inaproc.id/papuaselatan/lelang"},
+    {"nama": "Prov Papua Tengah", "url": "https://spse.inaproc.id/papuatengah/lelang"},
+    {"nama": "Prov Papua Pegunungan", "url": "https://spse.inaproc.id/papuapegunungan/lelang"},
+    {"nama": "Prov Papua Barat Daya", "url": "https://spse.inaproc.id/papuabaratdaya/lelang"},
+    {"nama": "Kota Surabaya", "url": "https://spse.inaproc.id/surabaya/lelang"},
+    {"nama": "Kota Medan", "url": "https://spse.inaproc.id/medan/lelang"},
+    {"nama": "Kota Makassar", "url": "https://spse.inaproc.id/makassar/lelang"},
+    {"nama": "Kota Bandung", "url": "https://spse.inaproc.id/bandung/lelang"},
+    {"nama": "Kota Semarang", "url": "https://spse.inaproc.id/semarang/lelang"},
+    {"nama": "Kota Palembang", "url": "https://spse.inaproc.id/palembang/lelang"},
+    {"nama": "Kota Tangerang", "url": "https://spse.inaproc.id/tangerangkota/lelang"},
+    {"nama": "Kota Tangerang Selatan", "url": "https://spse.inaproc.id/tangerangselatankota/lelang"},
+    {"nama": "Kota Bekasi", "url": "https://spse.inaproc.id/bekasikota/lelang"},
+    {"nama": "Kota Depok", "url": "https://spse.inaproc.id/depok/lelang"},
+    {"nama": "Kota Bogor", "url": "https://spse.inaproc.id/bogorkota/lelang"},
+    {"nama": "Kota Batam", "url": "https://spse.inaproc.id/batam/lelang"},
+    {"nama": "Kota Pekanbaru", "url": "https://spse.inaproc.id/pekanbaru/lelang"},
+    {"nama": "Kota Bandar Lampung", "url": "https://spse.inaproc.id/bandarlampung/lelang"},
+    {"nama": "Kota Denpasar", "url": "https://spse.inaproc.id/denpasarkota/lelang"},
+    {"nama": "Kota Balikpapan", "url": "https://spse.inaproc.id/balikpapan/lelang"},
+    {"nama": "Kota Samarinda", "url": "https://spse.inaproc.id/samarinda/lelang"},
+    {"nama": "Kota Banjarmasin", "url": "https://spse.inaproc.id/banjarmasin/lelang"},
+    {"nama": "Kota Manado", "url": "https://spse.inaproc.id/manado/lelang"},
+    {"nama": "Kota Jayapura", "url": "https://spse.inaproc.id/jayapura/lelang"},
 ]
 
 ALL_3_CATEGORIES = [
@@ -180,27 +241,21 @@ def normalize_jenis_pengadaan(raw_cat, real_jenis="", nama_paket=""):
 
     if "terintegrasi" in raw_lower or "terintegrasi" in rj_lower:
         if any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi", "tata naskah", "lisensi"]):
-            if "konsultan" in np_lower or "konsultansi" in rj_lower:
-                return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+            if "konsultan" in np_lower or "konsultansi" in rj_lower: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
             return "INVALID"
         return "Pekerjaan Konstruksi Terintegrasi"
 
-    if "konstruksi" in raw_lower and "non" not in raw_lower and "konsult" in raw_lower:
-        return "Jasa Konsultansi Badan Usaha Konstruksi"
-    if "konstruksi" in rj_lower and "non" not in rj_lower and "konsult" in rj_lower:
-        return "Jasa Konsultansi Badan Usaha Konstruksi"
+    if "konstruksi" in raw_lower and "non" not in raw_lower and "konsult" in raw_lower: return "Jasa Konsultansi Badan Usaha Konstruksi"
+    if "konstruksi" in rj_lower and "non" not in rj_lower and "konsult" in rj_lower: return "Jasa Konsultansi Badan Usaha Konstruksi"
 
-    if "non" in raw_lower or "non" in rj_lower:
-        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
+    if "non" in raw_lower or "non" in rj_lower: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
 
     full_text = f"{raw_lower} {rj_lower} {np_lower}"
     if any(k in full_text for k in ["konstruksi", "pembangunan", "gedung", "jalan", "jembatan", "irigasi", "renovasi", "pasram", "rumkit", "tpst", "spam", "dinas", "kantor", "rumah", "showroom", "ded", "supervisi", "manajemen konstruksi"]):
         if not any(k in np_lower for k in ["software", "developer", "aplikasi", "sistem informasi"]):
             return "Jasa Konsultansi Badan Usaha Konstruksi"
 
-    if "konsult" in raw_lower or "konsult" in rj_lower:
-        return "Jasa Konsultansi Badan Usaha Non Konstruksi"
-
+    if "konsult" in raw_lower or "konsult" in rj_lower: return "Jasa Konsultansi Badan Usaha Non Konstruksi"
     return "INVALID"
 
 def parse_rupiah_pintar(text, target_keyword=None):
@@ -288,9 +343,28 @@ def standardize_lpse_link(raw_url, kode_lpse_default="pu"):
     instansi = match_instansi.group(1) if match_instansi else kode_lpse_default
     return f"https://spse.inaproc.id/{instansi}/evaluasi/{kode_id}/pemenangberkontrak"
 
+
 def fetch_detail_paket(context, base_domain, kode_id, base_referer):
-    exact_hps, pemenang, nilai_kontrak, tgl_pembuatan = 0.0, "Belum Ditetapkan", 0.0, "-"
-    
+    exact_hps, pemenang, nilai_kontrak, tgl_pembuatan, real_jenis_pengadaan = 0.0, "Belum Ditetapkan", 0.0, "-", ""
+
+    js_pengumuman_extractor = """
+    () => {
+        let hps = "", tgl = "-", jenis = "";
+        let trs = document.querySelectorAll('table tr');
+        for (let tr of trs) {
+            let cells = tr.querySelectorAll('th, td');
+            if (cells.length >= 2) {
+                let label = cells[0].innerText.toLowerCase().trim();
+                let val = cells[1].innerText.trim();
+                if (label.includes('jenis pengadaan')) { jenis = val; }
+                else if (label.includes('tanggal pembuatan')) { tgl = val; }
+                else if (label.includes('hps paket') || label.includes('nilai hps')) { hps = val; }
+            }
+        }
+        return {tgl: tgl, hps: hps, jenis: jenis};
+    }
+    """
+
     js_pemenang_extractor = """
     () => {
         let p_name = "Belum Ditetapkan";
@@ -325,6 +399,28 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
 
     try:
         dp = context.new_page()
+        
+        # 1. Kunjungi Halaman Pengumuman untuk Tanggal Pembuatan
+        try:
+            time.sleep(1)
+            dp.goto(f"{base_domain}/lelang/{kode_id}/pengumumanlelang", referer=base_referer, wait_until="domcontentloaded", timeout=15000)
+            body_text = dp.inner_text("body")
+            
+            if "Terlalu Banyak Permintaan" in body_text:
+                time.sleep(15)
+                dp.goto(f"{base_domain}/lelang/{kode_id}/pengumumanlelang", referer=base_referer, wait_until="domcontentloaded", timeout=15000)
+                
+            res_pengumuman = dp.evaluate(js_pengumuman_extractor)
+            if res_pengumuman.get('jenis'): real_jenis_pengadaan = str(res_pengumuman['jenis']).strip()
+            if res_pengumuman.get('tgl') and res_pengumuman['tgl'] != "-":
+                m = re.search(r"([\d]{1,2}\s+[A-Za-z]+\s+[\d]{4})", res_pengumuman['tgl'])
+                if m: tgl_pembuatan = m.group(1).strip()
+            if res_pengumuman.get('hps'):
+                val = parse_rupiah_pintar(str(res_pengumuman['hps']), "HPS")
+                if val > 0: exact_hps = val
+        except Exception: pass
+
+        # 2. Kunjungi Halaman Pemenang
         endpoints = [f"{base_domain}/evaluasi/{kode_id}/pemenangberkontrak", f"{base_domain}/evaluasi/{kode_id}/pemenang"]
         for url in endpoints:
             try:
@@ -350,7 +446,7 @@ def fetch_detail_paket(context, base_domain, kode_id, base_referer):
         dp.close()
     except Exception: pass
 
-    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan
+    return exact_hps, pemenang, nilai_kontrak, tgl_pembuatan, real_jenis_pengadaan
 
 def save_and_update_excel(df_new, file_output):
     if not df_new.empty:
@@ -363,7 +459,8 @@ def save_and_update_excel(df_new, file_output):
             df_existing["ID LPSE"] = df_existing["ID LPSE"].astype(str).str.strip()
             df_existing["Sumber LPSE"] = df_existing["Sumber LPSE"].astype(str).str.strip()
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "ID LPSE"], keep="last")
+            # Menghapus duplikat berdasarkan Sumber LPSE dan Nama Paket sesuai arahan sebelumnya
+            df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "Nama Paket"], keep="last")
         except Exception: df_final = df_new
     else:
         df_final = df_new if not df_new.empty else pd.DataFrame(columns=KOLOM_TARGET)
@@ -536,12 +633,11 @@ def run_scraper(selected_lpse, target_years, max_pages, log_container):
                 for i, cand in enumerate(candidates_lpse):
                     status_text.caption(f"Memproses {i+1}/{len(candidates_lpse)}: ID {cand['ID LPSE']}...")
                     
-                    # PERBAIKAN: Hanya mengambil 4 variabel
-                    _, pemenang, nilai_kontrak_detail, tgl_pembuatan = fetch_detail_paket(
+                    _, pemenang, nilai_kontrak_detail, tgl_pembuatan, real_jenis = fetch_detail_paket(
                         context, base_domain, cand["ID LPSE"], lpse_url
                     )
 
-                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], "", cand["Nama Paket"])
+                    final_cat = normalize_jenis_pengadaan(cand["Jenis Pengadaan"], real_jenis, cand["Nama Paket"])
                     if final_cat not in ALL_3_CATEGORIES: continue
 
                     cand["Jenis Pengadaan"] = final_cat
