@@ -747,12 +747,13 @@ KOLOM_DISPLAY = ["Sumber LPSE", "ID LPSE", "Tanggal Pembuatan", "Instansi", "Nam
 
 st.markdown('<div class="hot-leads-header">🔥 HOT OPPORTUNITIES (Tender Aktif HPS ≥ Rp 2,5 Miliar)</div>', unsafe_allow_html=True)
 if not df_aktif.empty:
-    df_hot_show = df_aktif.head(10).copy()
+    df_hot_show = df_aktif.head(20).copy()  # <--- Ubah angka 10 menjadi 20
     cols_exist = [c for c in KOLOM_DISPLAY if c in df_hot_show.columns]
     df_hot_show = df_hot_show[cols_exist]
     df_hot_show["HPS"] = df_hot_show["HPS"].apply(format_rupiah_tabel)
     df_hot_show["Nilai Kontrak"] = df_hot_show["Nilai Kontrak"].apply(format_rupiah_tabel)
-    st.dataframe(df_hot_show, column_config={"Link": st.column_config.LinkColumn("⚡ Akses LPSE")}, use_container_width=True, height=320)
+    # Ubah height=320 menjadi height=700 agar tabelnya memanjang pas untuk 20 baris
+    st.dataframe(df_hot_show, column_config={"Link": st.column_config.LinkColumn("⚡ Akses LPSE")}, use_container_width=True, height=700)
 else:
     st.info("Belum ditemukan tender aktif berkategori HPS ≥ Rp 2,5 Miliar.")
 
