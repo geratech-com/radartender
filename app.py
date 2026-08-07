@@ -14,6 +14,11 @@ from playwright.sync_api import sync_playwright
 import streamlit as st
 
 # ==============================================================================
+# 0. KONFIGURASI COOKIES SPSE (ANTI-BLOKIR CLOUDFLARE)
+# ==============================================================================
+RAW_COOKIES = "_ga=GA1.1.2050872497.1784866919; __cf_bm=udk55.Cl1ZBux6Wkc2WgzIuMVnfbvN1sD6vN.QzCuno-1785917508.9321837-1.0.1.1-phur3ptgBte6Dd70xIeiv2CJnTTyY2xq1gfjMU4Gd4HYrppP4zCx2yFWioj9o6sFgOvdxPIZg8iX4xe9BpHtRwkam0QrasUGL3Fn7HEy.CpuHlkPH1P2rftXScJ1AAX6; _cfuvid=J30XFmLxeZ7Facy6BoQQipax6nbJYpR4l03IsLCVvis-1785917508.9321837-1.0.1.1-YX33n90SpxTA6LNqtW.4H_aAAtHzQZmO0TEoY9mSCz0; SPSE_SESSION=d1583ce0ab28e9f5b9dd8b88b76092f03be06769-___AT=755544c0106bc4025f205d99ea42c956668fea6d&___TS=1785919941685&___ID=59cc739a-58fd-465a-9210-93c4a42371ee; _ga_KLDH3FQ7DR=GS2.1.s1785917509$o24$g1$t1785918141$j14$l0$h0"
+
+# ==============================================================================
 # FIX KHUSUS WINDOWS + STREAMLIT + PLAYWRIGHT SUBPROCESS
 # ==============================================================================
 if sys.platform == "win32":
@@ -89,9 +94,6 @@ FILE_EXCEL_OUTPUT = "Hasil_Penarikan_LPSE_Nasional.xlsx"
 GITHUB_RAW_URL = "https://raw.githubusercontent.com/geratech-com/radartender/main/Hasil_Penarikan_LPSE_Nasional.xlsx"
 BATAS_MINIMAL_HPS = 2_500_000_000  # Rp 2,5 Miliar
 
-# ==============================================================================
-# 2. DAFTAR TARGET LPSE LENGKAP SE-INDONESIA & MASTER DATA (104 PORTAL)
-# ==============================================================================
 DAFTAR_LPSE = [
     {"nama": "LPSE Nasional", "url": "https://spse.inaproc.id/nasional/lelang"},
     {"nama": "Kementerian PUPR", "url": "https://spse.inaproc.id/pu/lelang"},
@@ -459,7 +461,6 @@ def save_and_update_excel(df_new, file_output):
             df_existing["ID LPSE"] = df_existing["ID LPSE"].astype(str).str.strip()
             df_existing["Sumber LPSE"] = df_existing["Sumber LPSE"].astype(str).str.strip()
             df_combined = pd.concat([df_existing, df_new], ignore_index=True)
-            # Menghapus duplikat berdasarkan Sumber LPSE dan Nama Paket sesuai arahan sebelumnya
             df_final = df_combined.drop_duplicates(subset=["Sumber LPSE", "Nama Paket"], keep="last")
         except Exception: df_final = df_new
     else:
@@ -687,12 +688,15 @@ st.sidebar.markdown("---")
 # ==============================================================================
 @st.cache_data(ttl=60)
 def load_lpse_data():
+    # PERBAIKAN: MEMPRIORITASKAN MEMBACA EXCEL LOKAL DIBANDINGKAN GITHUB
+    if os.path.exists(FILE_EXCEL_OUTPUT): 
+        return pd.read_excel(FILE_EXCEL_OUTPUT)
+        
     cache_buster_url = f"{GITHUB_RAW_URL}?v={int(time.time())}"
     try:
         response = requests.get(cache_buster_url, timeout=15)
         if response.status_code == 200: return pd.read_excel(io.BytesIO(response.content), engine="openpyxl")
     except Exception as e: st.warning(f"⚠️ Gagal memuat data dari GitHub: {e}")
-    if os.path.exists(FILE_EXCEL_OUTPUT): return pd.read_excel(FILE_EXCEL_OUTPUT)
     return pd.DataFrame()
 
 df_master = load_lpse_data()
@@ -794,12 +798,13 @@ else:
     st.info("Belum ada data untuk ditampilkan dalam tabel.")
 
 try:
-    resp = requests.get(GITHUB_RAW_URL)
-    excel_bytes = resp.content
-except Exception:
     if os.path.exists(FILE_EXCEL_OUTPUT):
         with open(FILE_EXCEL_OUTPUT, "rb") as f: excel_bytes = f.read()
-    else: excel_bytes = b""
+    else:
+        resp = requests.get(GITHUB_RAW_URL)
+        excel_bytes = resp.content
+except Exception:
+    excel_bytes = b""
 
 st.download_button(
     label="📥 Download Master Excel Lelang (HPS ≥ 2.5M) (.xlsx)",
